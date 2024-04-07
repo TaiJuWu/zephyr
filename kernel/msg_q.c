@@ -146,7 +146,8 @@ int z_impl_k_msgq_put(struct k_msgq *msgq, const void *data, k_timeout_t timeout
 			arch_thread_return_value_set(pending_thread, 0);
 			z_ready_thread(pending_thread);
 			z_reschedule(&msgq->lock, key);
-			return 0;
+			result = 0;
+			goto out;
 		} else {
 			/* put message in queue */
 			__ASSERT_NO_MSG(msgq->write_ptr >= msgq->buffer_start &&
@@ -180,6 +181,7 @@ int z_impl_k_msgq_put(struct k_msgq *msgq, const void *data, k_timeout_t timeout
 
 	k_spin_unlock(&msgq->lock, key);
 
+out:
 	return result;
 }
 
@@ -193,6 +195,81 @@ static inline int z_vrfy_k_msgq_put(struct k_msgq *msgq, const void *data,
 	return z_impl_k_msgq_put(msgq, data, timeout);
 }
 #include <syscalls/k_msgq_put_mrsh.c>
+#endif /* CONFIG_USERSPACE */
+
+int z_impl_k_msgq_put_front(struct k_msgq *msgq, const void *data, k_timeout_t timeout)
+{
+	__ASSERT(!arch_is_in_isr() || K_TIMEOUT_EQ(timeout, K_NO_WAIT), "");
+
+	struct k_thread *pending_thread;
+	k_spinlock_key_t key;
+	int result;
+
+	key = k_spin_lock(&msgq->lock);
+
+	SYS_PORT_TRACING_OBJ_FUNC_ENTER(k_msgq, put, msgq, timeout);
+
+	if (msgq->used_msgs < msgq->max_msgs) {
+		/* message queue isn't full */
+		pending_thread = z_unpend_first_thread(&msgq->wait_q);
+		if (pending_thread != NULL) {
+			SYS_PORT_TRACING_OBJ_FUNC_EXIT(k_msgq, put, msgq, timeout, 0);
+
+			/* give message to waiting thread */
+			(void)memcpy(pending_thread->base.swap_data, data,
+			       msgq->msg_size);
+			/* wake up waiting thread */
+			arch_thread_return_value_set(pending_thread, 0);
+			z_ready_thread(pending_thread);
+			z_reschedule(&msgq->lock, key);
+			return 0;
+		} else {
+			/* put message in queue */
+			/* Only different with z_impl_k_msgq_put */
+			__ASSERT_NO_MSG(msgq->read_ptr >= msgq->buffer_start &&
+					msgq->read_ptr < msgq->buffer_end);
+			if (msgq->read_ptr == msgq->buffer_start) {
+				msgq->read_ptr = msgq->buffer_end;
+			}
+			msgq->read_ptr -= msgq->msg_size;
+			(void)memcpy(msgq->read_ptr, data, msgq->msg_size);
+			msgq->used_msgs++;
+#ifdef CONFIG_POLL
+			handle_poll_events(msgq, K_POLL_STATE_MSGQ_DATA_AVAILABLE);
+#endif /* CONFIG_POLL */
+		}
+		result = 0;
+	} else if (K_TIMEOUT_EQ(timeout, K_NO_WAIT)) {
+		/* don't wait for message space to become available */
+		result = -ENOMSG;
+	} else {
+		SYS_PORT_TRACING_OBJ_FUNC_BLOCKING(k_msgq, put, msgq, timeout);
+
+		/* wait for put message success, failure, or timeout */
+		_current->base.swap_data = (void *) data;
+
+		result = z_pend_curr(&msgq->lock, key, &msgq->wait_q, timeout);
+		SYS_PORT_TRACING_OBJ_FUNC_EXIT(k_msgq, put, msgq, timeout, result);
+		return result;
+	}
+
+	SYS_PORT_TRACING_OBJ_FUNC_EXIT(k_msgq, put, msgq, timeout, result);
+
+	k_spin_unlock(&msgq->lock, key);
+
+	return result;
+}
+
+#ifdef CONFIG_USERSPACE
+static inline int z_vrfy_k_msgq_put_front(struct k_msgq *msgq, const void *data,
+				    k_timeout_t timeout)
+{
+	K_OOPS(K_SYSCALL_OBJ(msgq, K_OBJ_MSGQ));
+	K_OOPS(K_SYSCALL_MEMORY_READ(data, msgq->msg_size));
+
+	return z_impl_k_msgq_put_front(msgq, data, timeout);
+}
+#include <syscalls/k_msgq_put_front_mrsh.c>
 #endif /* CONFIG_USERSPACE */
 
 void z_impl_k_msgq_get_attrs(struct k_msgq *msgq, struct k_msgq_attrs *attrs)
