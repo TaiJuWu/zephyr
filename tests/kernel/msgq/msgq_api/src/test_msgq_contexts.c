@@ -28,7 +28,7 @@ static void put_msgq(struct k_msgq *pmsgq)
 	uint32_t read_data;
 
 	for (int i = 0; i < MSGQ_LEN; i++) {
-		ret = k_msgq_put(pmsgq, (void *)&data[i], K_NO_WAIT);
+		ret = k_msgq_put_front(pmsgq, (void *)&data[i], K_NO_WAIT);
 		zassert_equal(ret, 0);
 
 		/**TESTPOINT: Check if k_msgq_peek reads msgq
@@ -37,7 +37,7 @@ static void put_msgq(struct k_msgq *pmsgq)
 		 * always be the first message
 		 */
 		zassert_equal(k_msgq_peek(pmsgq, &read_data), 0);
-		zassert_equal(read_data, data[0]);
+		zassert_equal(read_data, data[i]);
 
 		/**TESTPOINT: msgq free get*/
 		zassert_equal(k_msgq_num_free_get(pmsgq),
@@ -57,7 +57,7 @@ static void get_msgq(struct k_msgq *pmsgq)
 
 		ret = k_msgq_get(pmsgq, &rx_data, K_FOREVER);
 		zassert_equal(ret, 0);
-		zassert_equal(rx_data, data[i]);
+		zassert_equal(rx_data, data[MSGQ_LEN - i - 1]);
 
 		/**TESTPOINT: Check if msg read is the msg deleted*/
 		zassert_equal(read_data, rx_data);
