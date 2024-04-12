@@ -28,14 +28,15 @@ static void put_msgq_front(struct k_msgq *pmsgq)
 	uint32_t read_data;
 
 	for (int i = 0; i < MSGQ_LEN; i++) {
-		ret = k_msgq_put_front(pmsgq, (void *)&data[i], K_NO_WAIT);
+		ret = IS_ENABLED(CONFIG_TEST_FRONT)?k_msgq_put_front(pmsgq, (void *)&data[i], K_NO_WAIT):
+											k_msgq_put(pmsgq, (void *)&data[i], K_NO_WAIT);
 		zassert_equal(ret, 0);
 
 		/**TESTPOINT: Check if k_msgq_peek reads msgq
 		 * in LIFO manner.
 		 */
 		zassert_equal(k_msgq_peek(pmsgq, &read_data), 0);
-		zassert_equal(read_data, data[i]);
+		zassert_equal(read_data, IS_ENABLED(CONFIG_TEST_FRONT)?data[0]:data[i]);
 
 		/**TESTPOINT: msgq free get*/
 		zassert_equal(k_msgq_num_free_get(pmsgq),
