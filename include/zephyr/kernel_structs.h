@@ -80,6 +80,19 @@ extern "C" {
 
 /* end - states */
 
+/* pending reason: Which call making thread pending */
+
+/* z_impl_k_msgq_prepend make thread pending */
+#define _MSG_PREPEND (BIT(0))
+
+/* z_impl_k_msgq_put make thread pending */
+#define _MSG_PUT (BIT(1))
+
+/* used to clear MSG_QUEUE pending reason */
+#define _MSG_QUEUE (_MSG_PREPEND & _MSG_PREPEND)
+
+/* end - pending_reason */
+
 #ifdef CONFIG_STACK_SENTINEL
 /* Magic value in lowest bytes of the stack */
 #define STACK_SENTINEL 0xF0F0F0F0

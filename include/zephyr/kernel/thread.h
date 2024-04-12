@@ -68,6 +68,9 @@ struct _thread_base {
 	 */
 	_wait_q_t *pended_on;
 
+	/* the reasone make this thread pending */
+	uint8_t pending_reason;
+
 	/* user facing 'thread options'; values defined in include/kernel.h */
 	uint8_t user_options;
 
