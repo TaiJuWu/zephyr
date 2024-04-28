@@ -309,6 +309,13 @@
 	sys_trace_k_msgq_put_blocking(msgq, data, timeout)
 #define sys_port_trace_k_msgq_put_exit(msgq, timeout, ret)                                         \
 	sys_trace_k_msgq_put_exit(msgq, data, timeout, ret)
+#define sys_port_trace_k_msgq_prepend_enter(msgq, timeout)                                         \
+	sys_trace_k_msgq_prepend_enter(msgq, data, timeout)
+
+#define sys_port_trace_k_msgq_prepend_blocking(msgq, timeout)                                      \
+	sys_trace_k_msgq_prepend_blocking(msgq, data, timeout)
+#define sys_port_trace_k_msgq_prepend_exit(msgq, timeout, ret)                                     \
+	sys_trace_k_msgq_prepend_exit(msgq, data, timeout, ret)
 #define sys_port_trace_k_msgq_get_enter(msgq, timeout)                                             \
 	sys_trace_k_msgq_get_enter(msgq, data, timeout)
 #define sys_port_trace_k_msgq_get_blocking(msgq, timeout)                                          \
