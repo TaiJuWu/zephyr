@@ -29,16 +29,15 @@ static void put_msgq(struct k_msgq *pmsgq)
 	uint32_t read_data;
 
 	for (int i = 0; i < MSGQ_LEN; i++) {
-		ret = k_msgq_put(pmsgq, (void *)&data[i], K_NO_WAIT);
+		ret = IS_ENABLED(CONFIG_TEST_MSGQ_PUT_FRONT) ?
+					k_msgq_put_front(pmsgq, (void *) &data[i], K_NO_WAIT) :
+					k_msgq_put(pmsgq, (void *)&data[i], K_NO_WAIT);
 		zassert_equal(ret, 0);
 
-		/**TESTPOINT: Check if k_msgq_peek reads msgq
-		 * in FIFO manner.
-		 * Everytime msg is enqueued, msg read should
-		 * always be the first message
+		/**TESTPOINT: Check if k_msgq_peek reads msgq.
 		 */
 		zassert_equal(k_msgq_peek(pmsgq, &read_data), 0);
-		zassert_equal(read_data, data[0]);
+		zassert_equal(read_data, IS_ENABLED(CONFIG_TEST_MSGQ_PUT_FRONT)?data[i]:data[0]);
 
 		/**TESTPOINT: msgq free get*/
 		zassert_equal(k_msgq_num_free_get(pmsgq),
@@ -58,7 +57,8 @@ static void get_msgq(struct k_msgq *pmsgq)
 
 		ret = k_msgq_get(pmsgq, &rx_data, K_FOREVER);
 		zassert_equal(ret, 0);
-		zassert_equal(rx_data, data[i]);
+		zassert_equal(rx_data,
+			IS_ENABLED(CONFIG_TEST_MSGQ_PUT_FRONT) ? data[MSGQ_LEN - i - 1]:data[i]);
 
 		/**TESTPOINT: Check if msg read is the msg deleted*/
 		zassert_equal(read_data, rx_data);
@@ -127,7 +127,9 @@ static void msgq_thread_overflow(struct k_msgq *pmsgq)
 {
 	int ret;
 
-	ret = k_msgq_put(pmsgq, (void *)&data[0], K_FOREVER);
+	ret = IS_ENABLED(CONFIG_TEST_MSGQ_PUT_FRONT) ?
+			k_msgq_put_front(pmsgq, (void *)&data[0], K_FOREVER) :
+			k_msgq_put(pmsgq, (void *)&data[0], K_FOREVER);
 
 	zassert_equal(ret, 0);
 
@@ -137,7 +139,9 @@ static void msgq_thread_overflow(struct k_msgq *pmsgq)
 				  K_PRIO_PREEMPT(0),
 				  K_USER | K_INHERIT_PERMS, K_NO_WAIT);
 
-	ret = k_msgq_put(pmsgq, (void *)&data[1], K_FOREVER);
+	ret = IS_ENABLED(CONFIG_TEST_MSGQ_PUT_FRONT) ?
+			k_msgq_put_front(pmsgq, (void *)&data[1], K_FOREVER) :
+			k_msgq_put(pmsgq, (void *)&data[1], K_FOREVER);
 
 	zassert_equal(ret, 0);
 
@@ -174,13 +178,19 @@ static void pend_thread_entry(void *p1, void *p2, void *p3)
 {
 	int ret;
 
-	ret = k_msgq_put(p1, &data[1], TIMEOUT);
+	ret = IS_ENABLED(CONFIG_TEST_MSGQ_PUT_FRONT) ?
+		k_msgq_put_front(p1, &data[1], TIMEOUT) :
+		k_msgq_put(p1, &data[1], TIMEOUT);
 	zassert_equal(ret, 0);
 }
 
 static void msgq_thread_data_passing(struct k_msgq *pmsgq)
 {
-	while (k_msgq_put(pmsgq, &data[0], K_NO_WAIT) != 0) {
+	while (
+		IS_ENABLED(CONFIG_TEST_MSGQ_PUT_FRONT) ?
+			k_msgq_put_front(pmsgq, &data[0], K_NO_WAIT) != 0 :
+			k_msgq_put(pmsgq, &data[0], K_NO_WAIT) != 0
+		) {
 	}
 
 	tids[0] = k_thread_create(&tdata2, tstack2, STACK_SIZE,
