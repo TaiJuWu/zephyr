@@ -28,16 +28,14 @@ static void put_msgq(struct k_msgq *pmsgq)
 	uint32_t read_data;
 
 	for (int i = 0; i < MSGQ_LEN; i++) {
-		ret = k_msgq_put(pmsgq, (void *)&data[i], K_NO_WAIT);
+		ret = IS_ENABLED(CONFIG_TEST_MSGQ_PREPEND)?k_msgq_prepend(pmsgq, (void *)&data[i], K_NO_WAIT):
+											k_msgq_put(pmsgq, (void *)&data[i], K_NO_WAIT);
 		zassert_equal(ret, 0);
 
-		/**TESTPOINT: Check if k_msgq_peek reads msgq
-		 * in FIFO manner.
-		 * Everytime msg is enqueued, msg read should
-		 * always be the first message
+		/**TESTPOINT: Check if k_msgq_peek reads msgq.
 		 */
 		zassert_equal(k_msgq_peek(pmsgq, &read_data), 0);
-		zassert_equal(read_data, data[0]);
+		zassert_equal(read_data, IS_ENABLED(CONFIG_TEST_MSGQ_PREPEND)?data[i]:data[0]);
 
 		/**TESTPOINT: msgq free get*/
 		zassert_equal(k_msgq_num_free_get(pmsgq),
@@ -57,7 +55,8 @@ static void get_msgq(struct k_msgq *pmsgq)
 
 		ret = k_msgq_get(pmsgq, &rx_data, K_FOREVER);
 		zassert_equal(ret, 0);
-		zassert_equal(rx_data, data[i]);
+		zassert_equal(rx_data,
+			IS_ENABLED(CONFIG_TEST_MSGQ_PREPEND) ? data[MSGQ_LEN - i - 1]:data[i]);
 
 		/**TESTPOINT: Check if msg read is the msg deleted*/
 		zassert_equal(read_data, rx_data);
