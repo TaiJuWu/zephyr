@@ -172,6 +172,45 @@ void unqueue_worker(void *p1, void *p2, void *p3)
 	n_exec += 1;
 }
 
+ZTEST(suite_deadline, test_absolute_deadline)
+{
+	int i;
+
+	n_exec = 0;
+
+	for (i = 0; i < NUM_THREADS; i++) {
+		worker_tids[i] = k_thread_create(&worker_threads[i],
+				worker_stacks[i], STACK_SIZE,
+				unqueue_worker, NULL, NULL, NULL,
+				K_LOWEST_APPLICATION_THREAD_PRIO,
+				0, K_MSEC(100));
+	}
+
+	zassert_true(n_exec == 0, "threads ran too soon");
+
+	for (i = 0; i < NUM_THREADS; i++) {
+		thread_deadlines[i] = sys_rand32_get() & 0x3fffff00;
+		k_thread_absolute_deadline_set(&worker_threads[i], thread_deadlines[i]);
+	}
+
+	for (i = 0; i < NUM_THREADS; ++i) {
+		zassert_true(worker_threads[i].base.prio_deadline == thread_deadlines[i], "");
+	}
+
+	k_sleep(K_MSEC(50));
+
+	zassert_true(n_exec == 0, "deadline set make the unqueued thread run");
+
+	k_sleep(K_MSEC(100));
+
+	zassert_true(n_exec == NUM_THREADS, "not enough threads ran");
+
+	for (i = 0; i < NUM_THREADS; i++) {
+		k_thread_abort(worker_tids[i]);
+	}
+}
+
+
 /**
  * @brief Validate the behavior of deadline_set when the thread is not queued
  *

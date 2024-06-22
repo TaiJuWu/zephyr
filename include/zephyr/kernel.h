@@ -881,6 +881,7 @@ __syscall void k_thread_priority_set(k_tid_t thread, int prio);
  *
  */
 __syscall void k_thread_deadline_set(k_tid_t thread, int deadline);
+__syscall void k_thread_absolute_deadline_set(k_tid_t thread, int deadline);
 #endif
 
 #ifdef CONFIG_SCHED_CPU_MASK
