@@ -13,7 +13,7 @@ from pathlib import Path
 try:
     from elftools.elf.elffile import ELFFile
 except ImportError:
-    ELFFile = None
+    pass
 
 from runners.core import ZephyrBinaryRunner
 
