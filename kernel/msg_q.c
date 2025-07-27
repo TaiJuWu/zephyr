@@ -136,9 +136,11 @@ static inline int put_msg_in_queue(struct k_msgq *msgq, const void *data,
 
 	key = k_spin_lock(&msgq->lock);
 
-	if (put_at_back) {
+	if (likely(put_at_back)) {
+		_current->base.pending_reason &= BIT(_MSG_PENDING);
 		SYS_PORT_TRACING_OBJ_FUNC_ENTER(k_msgq, put, msgq, timeout);
 	} else {
+		_current->base.pending_reason |= BIT(_MSG_PENDING);
 		SYS_PORT_TRACING_OBJ_FUNC_ENTER(k_msgq, put_front, msgq, timeout);
 	}
 
@@ -301,13 +303,24 @@ int z_impl_k_msgq_get(struct k_msgq *msgq, void *data, k_timeout_t timeout)
 			SYS_PORT_TRACING_OBJ_FUNC_BLOCKING(k_msgq, get, msgq, timeout);
 
 			/* add thread's message to queue */
-			__ASSERT_NO_MSG(msgq->write_ptr >= msgq->buffer_start &&
-					msgq->write_ptr < msgq->buffer_end);
-			(void)memcpy(msgq->write_ptr, (char *)pending_thread->base.swap_data,
+			if (pending_thread->base.pending_reason & BIT(_MSG_PENDING)) {
+				__ASSERT_NO_MSG(msgq->read_ptr >= msgq->buffer_start &&
+						msgq->read_ptr < msgq->buffer_end);
+				if (msgq->read_ptr == msgq->buffer_start) {
+					msgq->read_ptr = msgq->buffer_end;
+				}
+				msgq->read_ptr -= msgq->msg_size;
+				(void)memcpy(msgq->read_ptr, pending_thread->base.swap_data,
+					msgq->msg_size);
+			} else {
+				__ASSERT_NO_MSG(msgq->write_ptr >= msgq->buffer_start &&
+						msgq->write_ptr < msgq->buffer_end);
+				(void)memcpy(msgq->write_ptr, pending_thread->base.swap_data,
 			       msgq->msg_size);
-			msgq->write_ptr += msgq->msg_size;
-			if (msgq->write_ptr == msgq->buffer_end) {
-				msgq->write_ptr = msgq->buffer_start;
+				msgq->write_ptr += msgq->msg_size;
+				if (msgq->write_ptr == msgq->buffer_end) {
+					msgq->write_ptr = msgq->buffer_start;
+				}
 			}
 			msgq->used_msgs++;
 
