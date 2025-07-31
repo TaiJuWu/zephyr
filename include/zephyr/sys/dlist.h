@@ -574,6 +574,19 @@ static inline size_t sys_dlist_len(const sys_dlist_t *list)
 	return len;
 }
 
+static inline bool sys_dlist_is_contain(const sys_dlist_t *list, const sys_dnode_t *node)
+{
+	sys_dnode_t *tmp = sys_dlist_peek_next_no_check(list, sys_dlist_peek_head(list));
+
+	while (sys_dlist_is_head(list, tmp)) {
+		tmp = sys_dlist_peek_next_no_check(list, tmp);
+		if (tmp == node) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /** @} */
 
 #ifdef __cplusplus

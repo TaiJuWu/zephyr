@@ -16,6 +16,12 @@ LOG_MODULE_REGISTER(p4wq, CONFIG_LOG_DEFAULT_LEVEL);
 
 struct device;
 
+static void p4w_sys_dlist_remove(sys_dlist_t *list, sys_dnode_t *node)
+{
+	ARG_UNUSED(list);
+	sys_dlist_remove(node);
+}
+
 static void set_prio(struct k_thread *th, struct k_p4wq_work *item)
 {
 	__ASSERT_NO_MSG(!IS_ENABLED(CONFIG_SMP) || !z_is_thread_queued(th));
@@ -23,10 +29,10 @@ static void set_prio(struct k_thread *th, struct k_p4wq_work *item)
 	th->base.prio_deadline = item->deadline;
 }
 
-static bool rb_lessthan(struct rbnode *a, struct rbnode *b)
+static bool node_lessthan(p4w_struct *a, p4w_struct *b)
 {
-	struct k_p4wq_work *aw = CONTAINER_OF(a, struct k_p4wq_work, rbnode);
-	struct k_p4wq_work *bw = CONTAINER_OF(b, struct k_p4wq_work, rbnode);
+	struct k_p4wq_work *aw = CONTAINER_OF(a, struct k_p4wq_work, p4w_node);
+	struct k_p4wq_work *bw = CONTAINER_OF(b, struct k_p4wq_work, p4w_node);
 
 	if (aw->priority != bw->priority) {
 		return aw->priority > bw->priority;
@@ -37,6 +43,19 @@ static bool rb_lessthan(struct rbnode *a, struct rbnode *b)
 	}
 
 	return (uintptr_t)a < (uintptr_t)b;
+}
+
+static void p4w_dlist_insert(sys_dlist_t *list, sys_dnode_t *node)
+{
+	sys_dnode_t *tmp = NULL;
+
+	SYS_DLIST_FOR_EACH_NODE(list, tmp) {
+		if (node_lessthan(node, tmp) > 0) {
+			sys_dlist_insert(node, tmp);
+			return;
+		}
+	}
+	sys_dlist_append(list, node);
 }
 
 static void thread_set_requeued(struct k_thread *th)
@@ -54,7 +73,7 @@ static bool thread_was_requeued(struct k_thread *th)
 	return !!(th->base.user_options & K_CALLBACK_STATE);
 }
 
-/* Slightly different semantics: rb_lessthan must be perfectly
+/* Slightly different semantics: node_lessthan must be perfectly
  * symmetric (to produce a single tree structure) and will use the
  * pointer value to break ties where priorities are equal, here we
  * tolerate equality as meaning "not lessthan"
@@ -80,13 +99,13 @@ static FUNC_NORETURN void p4wq_loop(void *p0, void *p1, void *p2)
 	k_spinlock_key_t k = k_spin_lock(&queue->lock);
 
 	while (true) {
-		struct rbnode *r = rb_get_max(&queue->queue);
+		p4w_struct *r = p4w_get_max(&queue->queue);
 
 		if (r) {
 			struct k_p4wq_work *w
-				= CONTAINER_OF(r, struct k_p4wq_work, rbnode);
+				= CONTAINER_OF(r, struct k_p4wq_work, p4w_node);
 
-			rb_remove(&queue->queue, r);
+			p4w_remove(&queue->queue, r);
 			w->thread = _current;
 			sys_dlist_append(&queue->active, &w->dlnode);
 			set_prio(_current, w);
@@ -134,7 +153,9 @@ void k_p4wq_init(struct k_p4wq *queue)
 {
 	memset(queue, 0, sizeof(*queue));
 	z_waitq_init(&queue->waitq);
-	queue->queue.lessthan_fn = rb_lessthan;
+	#ifndef CONFIG_SIMPLE_NODE
+	queue->queue.lessthan_fn = node_lessthan;
+	#endif
 	sys_dlist_init(&queue->active);
 }
 
@@ -244,14 +265,14 @@ void k_p4wq_submit(struct k_p4wq *queue, struct k_p4wq_work *item)
 	}
 	__ASSERT_NO_MSG(item->thread == NULL);
 
-	rb_insert(&queue->queue, &item->rbnode);
+	p4w_insert(&queue->queue, &item->p4w_node);
 	item->queue = queue;
 
 	/* If there were other items already ahead of it in the queue,
 	 * then we don't need to revisit active thread state and can
 	 * return.
 	 */
-	if (rb_get_max(&queue->queue) != &item->rbnode) {
+	if (p4w_get_max(&queue->queue) != &item->p4w_node) {
 		goto out;
 	}
 
@@ -304,10 +325,10 @@ out:
 bool k_p4wq_cancel(struct k_p4wq *queue, struct k_p4wq_work *item)
 {
 	k_spinlock_key_t k = k_spin_lock(&queue->lock);
-	bool ret = rb_contains(&queue->queue, &item->rbnode);
+	bool ret = p4w_contains(&queue->queue, &item->p4w_node);
 
 	if (ret) {
-		rb_remove(&queue->queue, &item->rbnode);
+		p4w_remove(&queue->queue, &item->p4w_node);
 
 		if (queue->done_handler) {
 			k_spin_unlock(&queue->lock, k);

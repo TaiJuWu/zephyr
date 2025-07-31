@@ -9,6 +9,26 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/iterable_sections.h>
 
+#define CONFIG_SIMPLE_NODE
+
+#ifdef CONFIG_SIMPLE_NODE
+#define p4w_tree sys_dlist_t
+#define p4w_struct sys_dnode_t
+#define p4w_node dlnode
+#define p4w_insert p4w_dlist_insert
+#define p4w_remove p4w_sys_dlist_remove
+#define p4w_contains sys_dlist_is_contain
+#define p4w_get_max sys_dlist_peek_head
+#else
+#define p4w_tree rbtree_t
+#define p4w_struct rbnode_t
+#define p4w_node rbnode
+#define p4w_insert rb_insert
+#define p4w_remove rb_remove
+#define p4w_contains rb_contains
+#define p4w_get_max rb_get_max
+#endif
+
 /* Zephyr Pooled Parallel Preemptible Priority-based Work Queues */
 
 struct k_p4wq_work;
@@ -43,7 +63,7 @@ struct k_p4wq_work {
 
 	/* reserved for implementation */
 	union {
-		struct rbnode rbnode;
+		rbnode_t rbnode;
 		sys_dlist_t dlnode;
 	};
 	struct k_thread *thread;
@@ -74,7 +94,7 @@ struct k_p4wq {
 	_wait_q_t waitq;
 
 	/* Work items waiting for processing */
-	struct rbtree queue;
+	p4w_tree queue;
 
 	/* Work items in progress */
 	sys_dlist_t active;
