@@ -920,10 +920,8 @@ void *z_get_next_switch_handle(void *interrupted)
 		}
 		old_thread->switch_handle = interrupted;
 		ret = new_thread->switch_handle;
-		if (IS_ENABLED(CONFIG_SMP)) {
-			/* Active threads MUST have a null here */
-			new_thread->switch_handle = NULL;
-		}
+		/* Active threads MUST have a null here */
+		new_thread->switch_handle = NULL;
 	}
 	signal_pending_ipi();
 	return ret;
