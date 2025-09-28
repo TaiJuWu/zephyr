@@ -76,14 +76,18 @@ static ALWAYS_INLINE void *curr_cpu_runq(void)
 
 static ALWAYS_INLINE void runq_add(struct k_thread *thread)
 {
-	__ASSERT_NO_MSG(!z_is_idle_thread_object(thread) && !thread_is_metairq(thread));
+	__ASSERT_NO_MSG(!z_is_idle_thread_object(thread));
+	__ASSERT_NO_MSG(!thread_is_metairq(thread));
+	__ASSERT_NO_MSG(!is_thread_dummy(thread));
 
 	_priq_run_add(thread_runq(thread), thread);
 }
 
 static ALWAYS_INLINE void runq_remove(struct k_thread *thread)
 {
-	__ASSERT_NO_MSG(!z_is_idle_thread_object(thread) && !thread_is_metairq(thread));
+	__ASSERT_NO_MSG(!z_is_idle_thread_object(thread));
+	__ASSERT_NO_MSG(!thread_is_metairq(thread));
+	__ASSERT_NO_MSG(!is_thread_dummy(thread));
 
 	_priq_run_remove(thread_runq(thread), thread);
 }
