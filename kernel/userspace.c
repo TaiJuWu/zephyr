@@ -179,14 +179,29 @@ extern void z_object_gperf_wordlist_foreach(_wordlist_cb_func_t func,
 					     void *context);
 
 /*
- * Linked list of allocated kernel objects, for iteration over all allocated
- * objects (and potentially deleting them during iteration).
+ * Hash table of dynamically allocated kernel objects for O(1) lookup.
+ * Replaces the original O(n) linked list with a hash table using separate chaining.
+ *
+ * Design:
+ * - 64 buckets (configurable via OBJ_HASH_TABLE_SIZE)
+ * - Simple hash function based on pointer value
+ * - Each bucket is a doubly-linked list
+ * - Supports iteration by traversing all buckets
  */
-static sys_dlist_t obj_list = SYS_DLIST_STATIC_INIT(&obj_list);
+#define OBJ_HASH_TABLE_SIZE_BITS 5  /* 2^6 = 32 buckets */
+#define OBJ_HASH_TABLE_SIZE (1 << OBJ_HASH_TABLE_SIZE_BITS)
+#define OBJ_HASH_TABLE_MASK (OBJ_HASH_TABLE_SIZE - 1)
+
+static sys_dlist_t obj_hash_table[OBJ_HASH_TABLE_SIZE];
 
 /*
- * TODO: Write some hash table code that will replace obj_list.
+ * Hash function for kernel object pointers.
+ * Assumes 4-byte alignment (shifts right by 4).
  */
+static inline size_t obj_hash(const void *obj)
+{
+	return ((uintptr_t)obj >> 2) & OBJ_HASH_TABLE_MASK;
+}
 
 static size_t obj_size_get(enum k_objects otype)
 {
@@ -226,15 +241,16 @@ static struct dyn_obj *dyn_object_find(const void *obj)
 {
 	struct dyn_obj *node;
 	k_spinlock_key_t key;
+	size_t hash_idx;
 
-	/* For any dynamically allocated kernel object, the object
-	 * pointer is just a member of the containing struct dyn_obj,
-	 * so just a little arithmetic is necessary to locate the
-	 * corresponding struct rbnode
+	/* Hash the pointer to find the correct bucket.
+	 * Only search that bucket instead of entire list - O(1) vs O(n).
 	 */
+	hash_idx = obj_hash(obj);
 	key = k_spin_lock(&lists_lock);
 
-	SYS_DLIST_FOR_EACH_CONTAINER(&obj_list, node, dobj_list) {
+	/* Search only the hashed bucket */
+	SYS_DLIST_FOR_EACH_CONTAINER(&obj_hash_table[hash_idx], node, dobj_list) {
 		if (node->kobj.name == obj) {
 			goto end;
 		}
@@ -373,9 +389,12 @@ static struct k_object *dynamic_object_create(enum k_objects otype, size_t align
 	dyn->kobj.flags = 0;
 	(void)memset(dyn->kobj.perms, 0, CONFIG_MAX_THREAD_BYTES);
 
+	/* Insert into hash table */
+	size_t hash_idx = obj_hash(dyn->kobj.name);
+
 	k_spinlock_key_t key = k_spin_lock(&lists_lock);
 
-	sys_dlist_append(&obj_list, &dyn->dobj_list);
+	sys_dlist_append(&obj_hash_table[hash_idx], &dyn->dobj_list);
 	k_spin_unlock(&lists_lock, key);
 
 	return &dyn->kobj;
@@ -513,8 +532,11 @@ void k_object_wordlist_foreach(_wordlist_cb_func_t func, void *context)
 
 	k_spinlock_key_t key = k_spin_lock(&lists_lock);
 
-	SYS_DLIST_FOR_EACH_CONTAINER_SAFE(&obj_list, obj, next, dobj_list) {
-		func(&obj->kobj, context);
+	/* Iterate through all hash table buckets */
+	for (size_t i = 0; i < OBJ_HASH_TABLE_SIZE; i++) {
+		SYS_DLIST_FOR_EACH_CONTAINER_SAFE(&obj_hash_table[i], obj, next, dobj_list) {
+			func(&obj->kobj, context);
+		}
 	}
 	k_spin_unlock(&lists_lock, key);
 }
@@ -988,6 +1010,19 @@ static int app_shmem_bss_zero(void)
 
 	return 0;
 }
+
+#ifdef CONFIG_DYNAMIC_OBJECTS
+/* Initialize hash table buckets during early boot */
+static int obj_hash_table_init(void)
+{
+	for (size_t i = 0; i < OBJ_HASH_TABLE_SIZE; i++) {
+		sys_dlist_init(&obj_hash_table[i]);
+	}
+	return 0;
+}
+
+SYS_INIT(obj_hash_table_init, PRE_KERNEL_1, 0);
+#endif /* CONFIG_DYNAMIC_OBJECTS */
 
 SYS_INIT_NAMED(app_shmem_bss_zero_pre, app_shmem_bss_zero,
 	       PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
