@@ -153,6 +153,28 @@ static inline void clear_halting(struct k_thread *thread)
 	}
 }
 
+/* Track cooperative threads preempted by metairqs so we can return to
+ * them specifically.  Called at the moment a new thread has been
+ * selected to run.
+ */
+static void update_metairq_preempt(struct k_thread *thread)
+{
+	LOG_DBG("update meteirq preempt, thread=%p\n", thread);
+#if (CONFIG_NUM_METAIRQ_PRIORITIES > 0)
+	if (thread_is_metairq(thread) && !thread_is_metairq(_current) &&
+	    !thread_is_preemptible(_current)) {
+		/* Record new preemption */
+		_current_cpu->metairq_preempted = _current;
+	} else if (!thread_is_metairq(thread)) {
+		/* Returning from existing preemption */
+		_current_cpu->metairq_preempted = NULL;
+	}
+	LOG_DBG("_current_cpu->metairq_preempted, thread=%p\n", _current_cpu->metairq_preempted);
+#else
+	ARG_UNUSED(thread);
+#endif /* CONFIG_NUM_METAIRQ_PRIORITIES > 0 */
+}
+
 static ALWAYS_INLINE struct k_thread *next_up(void)
 {
 #ifdef CONFIG_SMP
@@ -222,15 +244,21 @@ static ALWAYS_INLINE struct k_thread *next_up(void)
 	}
 
 	/* Put _current back into the queue */
-	if ((thread != _current) && active &&
-		!z_is_idle_thread_object(_current) && !queued) {
-		queue_thread(_current);
+	if (thread != _current) {
+		update_metairq_preempt(thread);
+
+		if (active && !z_is_idle_thread_object(_current) && !queued 
+				&& _current != _current_cpu->metairq_preempted) {
+			queue_thread(_current);
+		}
 	}
 
 	/* Take the new _current out of the queue */
 	if (z_is_thread_queued(thread)) {
 		dequeue_thread(thread);
 	}
+
+	LOG_DBG("next thread=%p", next_up);
 
 	_current_cpu->swap_ok = false;
 	return thread;
@@ -242,26 +270,6 @@ void move_current_to_end_of_prio_q(void)
 	runq_yield();
 
 	update_cache(1);
-}
-
-/* Track cooperative threads preempted by metairqs so we can return to
- * them specifically.  Called at the moment a new thread has been
- * selected to run.
- */
-static void update_metairq_preempt(struct k_thread *thread)
-{
-#if (CONFIG_NUM_METAIRQ_PRIORITIES > 0)
-	if (thread_is_metairq(thread) && !thread_is_metairq(_current) &&
-	    !thread_is_preemptible(_current)) {
-		/* Record new preemption */
-		_current_cpu->metairq_preempted = _current;
-	} else if (!thread_is_metairq(thread)) {
-		/* Returning from existing preemption */
-		_current_cpu->metairq_preempted = NULL;
-	}
-#else
-	ARG_UNUSED(thread);
-#endif /* CONFIG_NUM_METAIRQ_PRIORITIES > 0 */
 }
 
 static ALWAYS_INLINE void update_cache(int preempt_ok)
@@ -316,6 +324,7 @@ static struct _cpu *thread_active_elsewhere(struct k_thread *thread)
 
 static void ready_thread(struct k_thread *thread)
 {
+	LOG_DBG("thread ready:%p", thread);
 #ifdef CONFIG_KERNEL_COHERENCE
 	__ASSERT_NO_MSG(sys_cache_is_mem_coherent(thread));
 #endif /* CONFIG_KERNEL_COHERENCE */
