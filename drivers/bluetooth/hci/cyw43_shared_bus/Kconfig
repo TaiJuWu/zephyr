@@ -1,0 +1,13 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config BT_CYW43_SHARED_BUS
+	bool "Infineon CYW43 BT-over-shared-bus HCI driver [EXPERIMENTAL]"
+	default y
+	depends on DT_HAS_INFINEON_CYW43_BT_HCI_ENABLED
+	select EXPERIMENTAL
+	help
+	  HCI transport driver for the Bluetooth controller inside the
+	  Infineon CYW43439 combo chip (e.g. Raspberry Pi Pico 2 W). Unlike
+	  the UART-HCI AIROC parts, the CYW43439 carries its BT HCI over the
+	  same gSPI bus as Wi-Fi ("shared bus"). Work in progress.
