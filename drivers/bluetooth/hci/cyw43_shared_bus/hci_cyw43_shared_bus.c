@@ -33,8 +33,11 @@
  * TODO(option-b, true Wi-Fi-free BT-only build): extract CYW43 chip/bus
  *   bring-up out of WHD so WIFI_AIROC can be =n. See bt-driver-design.md §9.6/§9.8.
  *
- * TODO(RX): currently polling (k_msleep). Switch to host-wake GPIO IRQ ->
- *   k_sem_give -> dedicated RX thread (NOT the system workqueue). See §8/§3.4.
+ * RX: adaptive poll (fast 1 ms after activity, back off to 50 ms idle) +
+ *   TX kick (send() wakes the RX thread). A dedicated RX interrupt is not
+ *   usable: GPIO24 is the shared SPI-data/host-wake pin managed by WHD, so
+ *   a piggybacked host-wake callback almost never fires (kept opportunistic).
+ *   See bt-driver-design.md section 8 / 3.4.
  * TODO(ext-adv): CYW43439 FW has no BT5 extended advertising; guard BT_EXT_ADV.
  * ---------------------------------------------------------------------------
  */
@@ -47,6 +50,7 @@
 #include <zephyr/net_buf.h>
 #include <zephyr/bluetooth/buf.h>
 #include <zephyr/drivers/bluetooth.h>
+#include <zephyr/drivers/gpio.h>
 
 #include "port/cyw43_ll.h"
 #include "port/cyw43_btbus.h"
@@ -55,6 +59,14 @@
 #include <whd.h>
 #include <whd_int.h>
 extern whd_interface_t airoc_wifi_get_whd_interface(void);
+
+/* Host-wake OOB line: the AIROC Wi-Fi driver owns this GPIO and configures
+ * it as an interrupt. We piggyback a second GPIO callback so the controller
+ * wakes the BT RX thread instead of it polling. No DT change needed.
+ */
+#define CYW43_AIROC_NODE DT_INST(0, infineon_airoc_wifi)
+static const struct gpio_dt_spec cyw43_bt_host_wake =
+	GPIO_DT_SPEC_GET_OR(CYW43_AIROC_NODE, wifi_host_wake_gpios, {0});
 
 #define LOG_LEVEL CONFIG_BT_HCI_DRIVER_LOG_LEVEL
 #include <zephyr/logging/log.h>
@@ -77,7 +89,10 @@ struct cyw43_bt_data {
 	struct bt_hci_driver_data common; /* keep first (bt_hci_recv uses dev->data) */
 	cyw43_ll_t ll;
 	struct k_thread rx_thread;
+	struct k_sem rx_sem;
+	struct gpio_callback host_wake_cb;
 	bool running;
+	bool irq_rx;
 };
 
 static K_THREAD_STACK_DEFINE(cyw43_bt_rx_stack, CYW43_BT_RX_STACK);
@@ -119,27 +134,66 @@ static struct net_buf *cyw43_bt_alloc_rx(uint8_t h4_type, const uint8_t *payload
 	return buf;
 }
 
+static void cyw43_bt_host_wake_isr(const struct device *port,
+				   struct gpio_callback *cb, uint32_t pins)
+{
+	struct cyw43_bt_data *d = CONTAINER_OF(cb, struct cyw43_bt_data, host_wake_cb);
+
+	ARG_UNUSED(port);
+	ARG_UNUSED(pins);
+	k_sem_give(&d->rx_sem);
+}
+
 static void cyw43_bt_rx_fn(void *a, void *b, void *c)
 {
 	struct cyw43_bt_data *d = a;
 	static uint8_t rxbuf[CYW43_BT_BUF_MAX] __aligned(4);
+	/* No usable dedicated RX interrupt here: GPIO24 is the shared SPI-data /
+	 * host-wake pin, armed only inside WHD's own idle windows, so a
+	 * piggybacked callback almost never fires (measured: relying on it gave
+	 * ~100 ms/command). Use adaptive polling with a TX kick: poll fast right
+	 * after activity (command responses, RX bursts) and back off when idle.
+	 * rx_sem is given by send() (TX kick) and, opportunistically, by the
+	 * host-wake callback on the rare occasions it does fire.
+	 */
+	bool fast = true;
+	uint32_t idle = 0;
 
 	ARG_UNUSED(b);
 	ARG_UNUSED(c);
 
 	while (d->running) {
-		uint32_t len = 0;
-		int err = cyw43_btbus_read(rxbuf, sizeof(rxbuf), &len);
+		int woken = k_sem_take(&d->rx_sem, fast ? K_MSEC(1) : K_MSEC(50));
+		bool got = false;
 
-		if (err == 0 && len > CYW43_BT_HDR_SIZE) {
-			struct net_buf *nb = cyw43_bt_alloc_rx(
-				rxbuf[3], &rxbuf[CYW43_BT_HDR_SIZE],
-				(uint16_t)(len - CYW43_BT_HDR_SIZE));
-			if (nb) {
-				bt_hci_recv(cyw43_bt_dev, nb);
+		if (woken == 0) {
+			fast = true;
+			idle = 0;
+		}
+
+		/* Drain everything currently pending before sleeping again. */
+		for (;;) {
+			uint32_t len = 0;
+			int err = cyw43_btbus_read(rxbuf, sizeof(rxbuf), &len);
+
+			if (err == 0 && len > CYW43_BT_HDR_SIZE) {
+				struct net_buf *nb = cyw43_bt_alloc_rx(
+					rxbuf[3], &rxbuf[CYW43_BT_HDR_SIZE],
+					(uint16_t)(len - CYW43_BT_HDR_SIZE));
+				if (nb) {
+					bt_hci_recv(cyw43_bt_dev, nb);
+				}
+				got = true;
+			} else {
+				break;
 			}
-		} else {
-			k_msleep(2);
+		}
+
+		if (got) {
+			fast = true;
+			idle = 0;
+		} else if (fast && ++idle >= 20U) {
+			fast = false;
 		}
 	}
 }
@@ -163,6 +217,23 @@ static int cyw43_bt_open(const struct device *dev)
 		return -EIO;
 	}
 
+	k_sem_init(&d->rx_sem, 0, 1);
+	d->irq_rx = false;
+	if (cyw43_bt_host_wake.port != NULL && gpio_is_ready_dt(&cyw43_bt_host_wake)) {
+		/* Do NOT reconfigure the pin; AIROC already set it up as an IRQ. */
+		gpio_init_callback(&d->host_wake_cb, cyw43_bt_host_wake_isr,
+				   BIT(cyw43_bt_host_wake.pin));
+		if (gpio_add_callback_dt(&cyw43_bt_host_wake, &d->host_wake_cb) == 0) {
+			d->irq_rx = true;
+			LOG_INF("CYW43 BT: host-wake callback on GPIO%u (opportunistic; "
+				"RX is adaptive poll + TX kick)", cyw43_bt_host_wake.pin);
+		} else {
+			LOG_WRN("CYW43 BT: host-wake add_callback failed; polling");
+		}
+	} else {
+		LOG_INF("CYW43 BT: no host-wake GPIO; RX polling");
+	}
+
 	cyw43_bt_dev = dev;
 	d->running = true;
 	k_thread_create(&d->rx_thread, cyw43_bt_rx_stack,
@@ -177,10 +248,9 @@ static int cyw43_bt_open(const struct device *dev)
 static int cyw43_bt_send(const struct device *dev, struct net_buf *buf)
 {
 	static uint8_t txbuf[CYW43_BT_BUF_MAX] __aligned(4);
+	struct cyw43_bt_data *d = dev->data;
 	uint8_t h4_type;
 	uint16_t plen;
-
-	ARG_UNUSED(dev);
 
 	/* Modern Zephyr HCI TX buffers are H:4 encoded: data[0] is the type. */
 	if (buf->len < 1) {
@@ -202,6 +272,11 @@ static int cyw43_bt_send(const struct device *dev, struct net_buf *buf)
 	memcpy(&txbuf[CYW43_BT_HDR_SIZE], &buf->data[1], plen);
 
 	int err = cyw43_btbus_write(txbuf, CYW43_BT_HDR_SIZE + plen);
+
+	/* TX kick: wake the RX thread so the command response is read promptly
+	 * without waiting for the idle poll (no reliable RX IRQ on this pin).
+	 */
+	k_sem_give(&d->rx_sem);
 
 	net_buf_unref(buf);
 	return err ? -EIO : 0;
