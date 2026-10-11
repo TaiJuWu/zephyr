@@ -1,0 +1,12 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Bluetooth HCI for the Bluetooth controller inside the Infineon CYW43439
+  Wi-Fi/BT combo (e.g. Raspberry Pi Pico 2 W). The BT controller shares the
+  gSPI bus with the Wi-Fi side ("BT over shared bus"); this node represents
+  the HCI transport over that shared bus.
+
+compatible: "infineon,cyw43-bt-hci"
+
+include: bt-hci.yaml
