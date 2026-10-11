@@ -1,9 +1,43 @@
 # Copyright (c) 2026
 # SPDX-License-Identifier: Apache-2.0
 
+# Build-time radio arbitration for the CYW43439 shared gSPI bus.
+#
+# The CYW43439 multiplexes Wi-Fi and BT HCI onto ONE physical gSPI. Running both
+# at full load triggers backplane/register corruption (see bt-driver-design.md
+# §7.2) and would require runtime bus arbitration + window guard (P6, §7.1).
+# To sidestep P6 entirely we pick exactly ONE active radio at build time (§9.6).
+choice CYW43_RADIO_USAGE
+	prompt "CYW43439 active radio (shared gSPI bus-sharing policy)"
+	depends on DT_HAS_INFINEON_CYW43_BT_HCI_ENABLED && WIFI_AIROC
+	default CYW43_RADIO_WIFI
+	help
+	  The CYW43439 shares one gSPI between Wi-Fi and BT. Pick exactly one
+	  active radio at build time so the two never contend on the bus; this
+	  avoids the P6 arbitration/corruption problem (bt-driver-design.md §7).
+
+config CYW43_RADIO_WIFI
+	bool "Wi-Fi only (BT HCI disabled)"
+	help
+	  Normal AIROC Wi-Fi. The CYW43 BT HCI driver stays off.
+
+config CYW43_RADIO_BT
+	bool "BT only (Wi-Fi compiled for chip bring-up, no Wi-Fi traffic)"
+	select BT_CYW43_SHARED_BUS
+	help
+	  Enable the CYW43 BT HCI driver. WIFI_AIROC stays compiled because it
+	  performs the CYW43 chip + gSPI bring-up (bt-driver-design.md §9.8), but
+	  the application MUST NOT start Wi-Fi traffic (no net-if up / no connect).
+	  Only one radio is active on the bus, so P6 arbitration is not required.
+	  #
+	  # TODO(option-b / next-plan): a true Wi-Fi-free BT-only build (WIFI_AIROC=n)
+	  # needs the CYW43 chip/bus bring-up extracted from WHD into a shared layer
+	  # so BT can bring the chip up itself. Not done. See bt-driver-design.md
+	  # §9.6 (option b), §9.8.
+endchoice
+
 config BT_CYW43_SHARED_BUS
 	bool "Infineon CYW43 BT-over-shared-bus HCI driver [EXPERIMENTAL]"
-	default y
 	depends on DT_HAS_INFINEON_CYW43_BT_HCI_ENABLED
 	depends on WIFI_AIROC
 	select EXPERIMENTAL
@@ -11,4 +45,5 @@ config BT_CYW43_SHARED_BUS
 	  HCI transport driver for the Bluetooth controller inside the
 	  Infineon CYW43439 combo chip (e.g. Raspberry Pi Pico 2 W). The BT
 	  controller shares the gSPI bus with Wi-Fi; this driver borrows the
-	  AIROC Wi-Fi driver WHD bus (Wi-Fi must be enabled). Work in progress.
+	  AIROC Wi-Fi driver WHD bus (Wi-Fi must be enabled). Normally selected
+	  via the CYW43_RADIO_BT choice above rather than set directly.

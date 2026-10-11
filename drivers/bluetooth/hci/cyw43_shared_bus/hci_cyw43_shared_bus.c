@@ -9,6 +9,36 @@
  * brought up by the AIROC Wi-Fi driver; we borrow its WHD handle.
  */
 
+/*
+ * ---------------------------------------------------------------------------
+ * Radio bus-sharing policy (build-time) & next plan
+ * ---------------------------------------------------------------------------
+ * The CYW43439 shares ONE gSPI between Wi-Fi and BT. We avoid the WiFi+BT
+ * simultaneous bus-arbitration problem ("P6") by letting only ONE radio be
+ * active per build, selected via Kconfig choice CYW43_RADIO_USAGE:
+ *   - CYW43_RADIO_WIFI : Wi-Fi only, this driver off.
+ *   - CYW43_RADIO_BT   : this driver on; WIFI_AIROC stays compiled ONLY to
+ *                        bring the CYW43 chip/bus up, no Wi-Fi traffic.
+ * So the P6 pieces below are intentionally NOT implemented yet:
+ *
+ * TODO(P6, if WiFi+BT must run together): see bt-driver-design.md §7.1/§7.2
+ *   1. shared bus lock covering the compound (set-backplane-window + transfer),
+ *      taken by BOTH the WHD Wi-Fi path and this BT path (WHD has no bus lock;
+ *      it assumes single-threaded access).
+ *   2. backplane-window guard (window is chip-global shared state).
+ *   3. port cybt CYBT_CORRUPTION_TEST detection/retry (chip-level corruption
+ *      still occurs under full load even when serialized).
+ *   4. radio/antenna coex: check Murata-1YN NVRAM btc_mode (else BLE TX ~-30dB).
+ *
+ * TODO(option-b, true Wi-Fi-free BT-only build): extract CYW43 chip/bus
+ *   bring-up out of WHD so WIFI_AIROC can be =n. See bt-driver-design.md §9.6/§9.8.
+ *
+ * TODO(RX): currently polling (k_msleep). Switch to host-wake GPIO IRQ ->
+ *   k_sem_give -> dedicated RX thread (NOT the system workqueue). See §8/§3.4.
+ * TODO(ext-adv): CYW43439 FW has no BT5 extended advertising; guard BT_EXT_ADV.
+ * ---------------------------------------------------------------------------
+ */
+
 #define DT_DRV_COMPAT infineon_cyw43_bt_hci
 
 #include <zephyr/kernel.h>
