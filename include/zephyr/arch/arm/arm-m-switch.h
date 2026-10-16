@@ -145,6 +145,30 @@ struct arm_m_cs_ptrs {
 /** Global instance with current callee-saved frame pointers. */
 extern struct arm_m_cs_ptrs arm_m_cs_ptrs;
 
+/* On SMP every CPU takes interrupts on its own interrupt stack and may be in
+ * the middle of its own interrupt-exit switch, so this state is per CPU.
+ */
+#ifdef CONFIG_SMP
+/* On SMP, _current is z_smp_current_get(), declared __attribute_const__, so
+ * the compiler may evaluate it at any point, e.g. after
+ * z_get_next_switch_handle() has already changed it: arm_m_must_switch()
+ * then took the incoming thread for the outgoing one and saved the
+ * interrupted context into the wrong thread. Interrupts are masked on all
+ * these paths, so read this CPU's field directly instead.
+ */
+#define ARM_M_CURRENT (arch_curr_cpu()->current)
+/* The TLS pointer read by __aeabi_read_tp() is per CPU as well. */
+#define ARM_M_SET_TLS(p) (arch_curr_cpu()->arch.tls_ptr = (uintptr_t)(p))
+BUILD_ASSERT(sizeof(struct arm_m_cs_ptrs) == sizeof(struct arm_m_cpu_cs_ptrs));
+#define ARM_M_CS_PTRS    ((struct arm_m_cs_ptrs *)&arch_curr_cpu()->arch.cs_ptrs)
+#define ARM_M_EXC_LR_PTR (arch_curr_cpu()->arch.exc_lr_ptr)
+#else
+#define ARM_M_CURRENT    _current
+#define ARM_M_SET_TLS(p) (z_arm_tls_ptr = (uintptr_t)(p))
+#define ARM_M_CS_PTRS    (&arm_m_cs_ptrs)
+#define ARM_M_EXC_LR_PTR arm_m_exc_lr_ptr
+#endif
+
 /**
  * @brief ISR-tail helper that patches the stacked LR for deferred switch fixup.
  *
@@ -200,9 +224,9 @@ static inline void arm_m_exc_tail(void)
 	}
 #endif
 
-	void *isr_lr = (void *)*arm_m_exc_lr_ptr;
+	void *isr_lr = (void *)*ARM_M_EXC_LR_PTR;
 
-	if (isr_lr != arm_m_cs_ptrs.lr_fixup) {
+	if (isr_lr != ARM_M_CS_PTRS->lr_fixup) {
 		/* We need to return to arm_m_exc_exit only if an exception is returning to thread
 		 * mode with PSP. Note that it is possible to get an exception in arm_m_exc_exit
 		 * after interrupts are enabled but, before branching to lr (0xFFFFFFFD) and, at
@@ -213,8 +237,8 @@ static inline void arm_m_exc_tail(void)
 		 */
 		if ((((uint32_t)isr_lr & 0xFFFFFF00U) == 0xFFFFFF00U)
 				&& (((uint32_t)isr_lr & 0xC) == 0xC)) {
-			arm_m_cs_ptrs.lr_save = isr_lr;
-			*arm_m_exc_lr_ptr = (uint32_t)arm_m_cs_ptrs.lr_fixup;
+			ARM_M_CS_PTRS->lr_save = isr_lr;
+			*ARM_M_EXC_LR_PTR = (uint32_t)ARM_M_CS_PTRS->lr_fixup;
 		}
 	}
 #endif
@@ -234,11 +258,11 @@ static inline void arm_m_exc_tail(void)
 static ALWAYS_INLINE void arm_m_switch(void *switch_to, void **switched_from)
 {
 #if defined(CONFIG_USERSPACE) || defined(CONFIG_MPU_STACK_GUARD)
-	z_arm_configure_dynamic_mpu_regions(_current);
+	z_arm_configure_dynamic_mpu_regions(ARM_M_CURRENT);
 #endif
 
 #ifdef CONFIG_THREAD_LOCAL_STORAGE
-	z_arm_tls_ptr = _current->tls;
+	ARM_M_SET_TLS(ARM_M_CURRENT->tls);
 #endif
 
 #if defined(CONFIG_USERSPACE) && defined(CONFIG_USE_SWITCH)
@@ -250,7 +274,7 @@ static ALWAYS_INLINE void arm_m_switch(void *switch_to, void **switched_from)
 	CONTROL_Type control = {.w = __get_CONTROL()};
 
 	__ASSERT_NO_MSG(!control.b.nPRIV);
-	arm_m_switch_control = control.w | (_current->arch.mode & 1);
+	arm_m_switch_control = control.w | (ARM_M_CURRENT->arch.mode & 1);
 #endif
 
 	/* new switch handle in r4, old switch handle pointer in r5.
