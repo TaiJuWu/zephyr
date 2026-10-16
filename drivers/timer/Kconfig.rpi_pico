@@ -1,0 +1,13 @@
+# Copyright (c) 2026 TaiJu Wu
+# SPDX-License-Identifier: Apache-2.0
+
+config RPI_PICO_SYSTEM_TIMER
+	bool "Raspberry Pi RP2350 TIMER system timer"
+	default y if SMP && ARM
+	depends on SOC_SERIES_RP2350
+	depends on $(dt_nodelabel_enabled,timer0)
+	select TICKLESS_CAPABLE
+	select TIMER_HAS_64BIT_CYCLE_COUNTER
+	help
+	  System timer on the RP2350 TIMER peripheral: a 64-bit 1 MHz counter
+	  shared by both cores. Unlike the per-core SysTick, it works on SMP.
