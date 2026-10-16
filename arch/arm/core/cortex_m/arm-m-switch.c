@@ -266,6 +266,17 @@ static void iciit_fixup(struct k_thread *th, struct hw_frame_base *hw, uint32_t 
 {
 #ifdef CONFIG_MULTITHREADING
 	if ((xpsr & 0x0600fc00) != 0) {
+		if (th->arch.iciit_pc != 0) {
+			/* A fixup is already pending: the thread was resumed
+			 * by arch_switch() and interrupted again inside its
+			 * restore sequence, in the multi-register POP that
+			 * leads to the stub. Do not overwrite the stashed
+			 * state; restarting a POP from RAM is harmless, so
+			 * just drop the ICI bits.
+			 */
+			hw->apsr &= ~0x0600fc00;
+			return;
+		}
 		/* Stash original return address, replace with hook */
 		th->arch.iciit_pc = hw->pc;
 		th->arch.iciit_apsr = hw->apsr;
