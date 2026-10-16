@@ -34,6 +34,7 @@ zephyr_library_sources(
   )
 
 zephyr_library_sources_ifdef(CONFIG_USE_SWITCH arm-m-switch.c)
+zephyr_library_sources_ifdef(CONFIG_SMP smp.c)
 zephyr_library_sources_ifndef(CONFIG_USE_SWITCH exc_exit.c thread_abort.c swap_helper.S)
 
 zephyr_library_sources_ifndef(CONFIG_ARM_CUSTOM_INTERRUPT_CONTROLLER irq_init.c)
