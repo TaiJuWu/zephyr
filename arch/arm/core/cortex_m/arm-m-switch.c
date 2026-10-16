@@ -589,11 +589,14 @@ bool arm_m_do_switch(struct k_thread *last_thread, void *next)
 	__set_PSP((uint32_t)next);
 
 	/* Undo a UDF fixup applied at interrupt time, no need: we're
-	 * restoring EPSR via interrupt.
+	 * restoring EPSR via interrupt.  Only if the frame really resumes at
+	 * the stub: a thread resumed by arch_switch() and interrupted again
+	 * inside its restore sequence (see iciit_fixup()) still has the fixup
+	 * pending, but must first finish that sequence, which ends at the stub.
 	 */
-	if (_current->arch.iciit_pc) {
-		struct hw_frame_base *n = next;
+	struct hw_frame_base *n = next;
 
+	if ((_current->arch.iciit_pc != 0) && pc_match(n->pc, arm_m_iciit_stub)) {
 		n->pc = _current->arch.iciit_pc;
 		n->apsr = _current->arch.iciit_apsr;
 		_current->arch.iciit_pc = 0;
