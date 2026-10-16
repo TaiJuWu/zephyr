@@ -24,6 +24,16 @@ static ALWAYS_INLINE _cpu_t *arch_curr_cpu(void)
 	/* Dummy implementation always return the first cpu */
 	return &_kernel.cpus[0];
 }
+#else
+/* ARMv8-M has no thread ID register to hold a per-CPU pointer: the SoC
+ * tells which core is running.
+ */
+#include <soc_cpu_id.h>
+
+static ALWAYS_INLINE _cpu_t *arch_curr_cpu(void)
+{
+	return &_kernel.cpus[soc_cpu_id()];
+}
 #endif
 #endif
 

@@ -293,9 +293,9 @@ bool arm_m_iciit_check(uint32_t msp, uint32_t psp, uint32_t lr)
 	/* Look for undefined instruction faults from our stub */
 	if (pc_match(f->pc, arm_m_iciit_stub)) {
 		if (is_thread_return(lr)) {
-			f->pc = _current->arch.iciit_pc;
-			f->apsr = _current->arch.iciit_apsr;
-			_current->arch.iciit_pc = 0;
+			f->pc = ARM_M_CURRENT->arch.iciit_pc;
+			f->apsr = ARM_M_CURRENT->arch.iciit_apsr;
+			ARM_M_CURRENT->arch.iciit_pc = 0;
 			return true;
 		}
 	}
@@ -365,9 +365,9 @@ static void *arm_m_switch_to_cpu(void *sp)
 	 * funny layout that puts r7 first!
 	 */
 	if (padded) {
-		arm_m_cs_ptrs.in = &f->synth_a.r7;
+		ARM_M_CS_PTRS->in = &f->synth_a.r7;
 	} else {
-		arm_m_cs_ptrs.in = &f->z.u.hw.r7;
+		ARM_M_CS_PTRS->in = &f->z.u.hw.r7;
 	}
 
 	return padded ? &f->synth_a.base.base : &f->z.u.hw.base;
@@ -445,7 +445,7 @@ static void *arm_m_cpu_to_switch(struct k_thread *th, void *sp, bool fpu)
 #endif
 
 	/* Mark the callee-saved pointer for the fixup assembly */
-	arm_m_cs_ptrs.out = &f->z.u.sw.r4;
+	ARM_M_CS_PTRS->out = &f->z.u.sw.r4;
 
 #ifdef CONFIG_FPU
 	if (fpu) {
@@ -460,6 +460,26 @@ static void *arm_m_cpu_to_switch(struct k_thread *th, void *sp, bool fpu)
 	return &f->z.u.sw;
 #endif
 }
+
+#if defined(CONFIG_SMP) && defined(CONFIG_MULTITHREADING)
+/* Per-CPU part of the interrupt-exit switch state: where the topmost
+ * EXC_RETURN lands on this CPU's interrupt stack, and the fixup address.
+ */
+void arm_m_switch_cpu_init(int cpu)
+{
+	char *stack = (char *)K_KERNEL_STACK_BUFFER(z_interrupt_stacks[cpu]);
+	uint32_t *s_top = (uint32_t *)(stack + K_KERNEL_STACK_SIZEOF(z_interrupt_stacks[cpu]));
+
+	_kernel.cpus[cpu].arch.exc_lr_ptr = &s_top[-1];
+	_kernel.cpus[cpu].arch.cs_ptrs.lr_fixup = (void *)(1 | (uint32_t)arm_m_exc_exit);
+}
+
+/* For arm_m_exc_exit(): this CPU's cs_ptrs */
+struct arm_m_cs_ptrs *arm_m_cs_ptrs_cur(void)
+{
+	return ARM_M_CS_PTRS;
+}
+#endif
 
 void *arm_m_new_stack(char *base, uint32_t sz, void *entry, void *arg0, void *arg1, void *arg2,
 		      void *arg3)
@@ -483,6 +503,9 @@ void *arm_m_new_stack(char *base, uint32_t sz, void *entry, void *arg0, void *ar
 
 	arm_m_exc_lr_ptr = &s_top[-1];
 	arm_m_cs_ptrs.lr_fixup = (void *)(1 | (uint32_t)arm_m_exc_exit); /* thumb bit! */
+#ifdef CONFIG_SMP
+	arm_m_switch_cpu_init(0);
+#endif
 #endif
 
 	baddr = ((uint32_t)base + 7) & ~7;
@@ -534,11 +557,11 @@ bool arm_m_must_switch(void)
 	 * and returning to thread mode.
 	 */
 	if ((IS_ENABLED(CONFIG_ARM_SECURE_FIRMWARE) || IS_ENABLED(CONFIG_ARM_NONSECURE_FIRMWARE)) &&
-	    !is_thread_return((uint32_t)arm_m_cs_ptrs.lr_save)) {
+	    !is_thread_return((uint32_t)ARM_M_CS_PTRS->lr_save)) {
 		return false;
 	}
 
-	struct k_thread *last_thread = _current;
+	struct k_thread *last_thread = ARM_M_CURRENT;
 	void *next = z_sched_next_handle(last_thread);
 
 	if (next == NULL) {
@@ -552,7 +575,7 @@ bool arm_m_must_switch(void)
 bool arm_m_do_switch(struct k_thread *last_thread, void *next)
 {
 	void *last;
-	bool fpu = fpu_state_pushed((uint32_t)arm_m_cs_ptrs.lr_save);
+	bool fpu = fpu_state_pushed((uint32_t)ARM_M_CS_PTRS->lr_save);
 
 	last = (void *)__get_PSP();
 
@@ -580,7 +603,7 @@ bool arm_m_do_switch(struct k_thread *last_thread, void *next)
 	}
 
 	control.w = __get_CONTROL();
-	control.b.nPRIV = _current->arch.mode & 1;
+	control.b.nPRIV = ARM_M_CURRENT->arch.mode & 1;
 	__set_CONTROL(control.w);
 #endif
 
@@ -596,10 +619,10 @@ bool arm_m_do_switch(struct k_thread *last_thread, void *next)
 	 */
 	struct hw_frame_base *n = next;
 
-	if ((_current->arch.iciit_pc != 0) && pc_match(n->pc, arm_m_iciit_stub)) {
-		n->pc = _current->arch.iciit_pc;
-		n->apsr = _current->arch.iciit_apsr;
-		_current->arch.iciit_pc = 0;
+	if ((ARM_M_CURRENT->arch.iciit_pc != 0) && pc_match(n->pc, arm_m_iciit_stub)) {
+		n->pc = ARM_M_CURRENT->arch.iciit_pc;
+		n->apsr = ARM_M_CURRENT->arch.iciit_apsr;
+		ARM_M_CURRENT->arch.iciit_pc = 0;
 	}
 
 #if !defined(CONFIG_MULTITHREADING)
@@ -609,11 +632,11 @@ bool arm_m_do_switch(struct k_thread *last_thread, void *next)
 #endif
 
 #if defined(CONFIG_USERSPACE) || defined(CONFIG_MPU_STACK_GUARD)
-	z_arm_configure_dynamic_mpu_regions(_current);
+	z_arm_configure_dynamic_mpu_regions(ARM_M_CURRENT);
 #endif
 
 #ifdef CONFIG_THREAD_LOCAL_STORAGE
-	z_arm_tls_ptr = _current->tls;
+	ARM_M_SET_TLS(ARM_M_CURRENT->tls);
 #endif
 	return true;
 }
@@ -640,7 +663,14 @@ void arm_m_legacy_exit(void)
 __attribute__((naked)) void arm_m_exc_exit(void)
 {
 	__asm__("  bl arm_m_must_switch;"
+#ifdef CONFIG_SMP
+		"  push {r0, r1};" /* keep the 8-byte stack alignment */
+		"  bl arm_m_cs_ptrs_cur;"
+		"  mov r2, r0;"
+		"  pop {r0, r1};"
+#else
 		"  ldr r2, =arm_m_cs_ptrs;"
+#endif
 		"  mov r3, #0;"
 		"  ldr lr, [r2, #8];" /* lr_save */
 		"  cbz r0, 1f;"
