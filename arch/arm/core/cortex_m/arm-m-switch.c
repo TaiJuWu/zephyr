@@ -627,6 +627,13 @@ bool arm_m_do_switch(struct k_thread *last_thread, void *next)
 
 #if !defined(CONFIG_MULTITHREADING)
 	arm_m_last_switch_handle = last;
+#elif defined(CONFIG_SMP)
+	/* r4-r11 are not in the frame yet: arm_m_exc_exit stores them.
+	 * Another CPU may resume the thread as soon as switch_handle is set,
+	 * so leave that to arm_m_exc_exit too.
+	 */
+	ARM_M_CS_PTRS->handle_ptr = &last_thread->switch_handle;
+	ARM_M_CS_PTRS->handle = last;
 #elif defined(CONFIG_USE_SWITCH)
 	last_thread->switch_handle = last;
 #endif
@@ -677,6 +684,13 @@ __attribute__((naked)) void arm_m_exc_exit(void)
 		"  mov lr, #0xfffffffd;" /* integer-only LR */
 		"  ldm r2, {r0, r1};"    /* fields: out, in */
 		"  stm r0, {r4-r11};"    /* out is a switch_frame */
+#ifdef CONFIG_SMP
+		/* Frame complete: publish the outgoing switch handle */
+		"  ldr r0, [r2, #16];"   /* handle_ptr */
+		"  ldr r12, [r2, #20];"  /* handle */
+		"  dmb;"
+		"  str r12, [r0];"
+#endif
 		"  ldm r1!, {r7-r11};"   /* in is a synth_frame */
 		"  ldm r1, {r4-r6};"
 		"1:\n"

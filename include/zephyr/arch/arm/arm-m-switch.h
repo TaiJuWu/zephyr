@@ -139,6 +139,12 @@ extern uint32_t arm_m_switch_stack_buffer;
 struct arm_m_cs_ptrs {
 	/** Pointer to the callee-saved block being written by the outgoing thread */
 	void *out, *in, *lr_save, *lr_fixup;
+#ifdef CONFIG_SMP
+	/** Outgoing thread's switch_handle and its value, stored only once
+	 * the callee-saved registers are in the frame (see arm_m_exc_exit)
+	 */
+	void **handle_ptr, *handle;
+#endif
 };
 /** @endcond */
 
@@ -340,6 +346,10 @@ static ALWAYS_INLINE void arm_m_switch(void *switch_to, void **switched_from)
 			  * interruptible code (running in the incoming thread) once
 			  * the stack is valid.
 			  */
+#ifdef CONFIG_SMP
+			 /* Frame complete before another CPU can see the handle */
+			 "dmb;"
+#endif
 			 "str sp, [r5];"
 			 "mov sp, r4;"
 			 "msr basepri, r0;"

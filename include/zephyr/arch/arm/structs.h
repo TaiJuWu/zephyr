@@ -29,6 +29,7 @@ struct _cpu_arch {
  */
 struct arm_m_cpu_cs_ptrs {
 	void *out, *in, *lr_save, *lr_fixup;
+	void **handle_ptr, *handle;
 };
 
 /* Per CPU architecture specifics */
