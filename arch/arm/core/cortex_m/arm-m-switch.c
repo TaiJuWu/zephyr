@@ -266,6 +266,17 @@ static void iciit_fixup(struct k_thread *th, struct hw_frame_base *hw, uint32_t 
 {
 #ifdef CONFIG_MULTITHREADING
 	if ((xpsr & 0x0600fc00) != 0) {
+		if (th->arch.iciit_pc != 0) {
+			/* A fixup is already pending: the thread was resumed
+			 * by arch_switch() and interrupted again inside its
+			 * restore sequence, in the multi-register POP that
+			 * leads to the stub. Do not overwrite the stashed
+			 * state; restarting a POP from RAM is harmless, so
+			 * just drop the ICI bits.
+			 */
+			hw->apsr &= ~0x0600fc00;
+			return;
+		}
 		/* Stash original return address, replace with hook */
 		th->arch.iciit_pc = hw->pc;
 		th->arch.iciit_apsr = hw->apsr;
@@ -282,9 +293,9 @@ bool arm_m_iciit_check(uint32_t msp, uint32_t psp, uint32_t lr)
 	/* Look for undefined instruction faults from our stub */
 	if (pc_match(f->pc, arm_m_iciit_stub)) {
 		if (is_thread_return(lr)) {
-			f->pc = _current->arch.iciit_pc;
-			f->apsr = _current->arch.iciit_apsr;
-			_current->arch.iciit_pc = 0;
+			f->pc = ARM_M_CURRENT->arch.iciit_pc;
+			f->apsr = ARM_M_CURRENT->arch.iciit_apsr;
+			ARM_M_CURRENT->arch.iciit_pc = 0;
 			return true;
 		}
 	}
@@ -354,9 +365,9 @@ static void *arm_m_switch_to_cpu(void *sp)
 	 * funny layout that puts r7 first!
 	 */
 	if (padded) {
-		arm_m_cs_ptrs.in = &f->synth_a.r7;
+		ARM_M_CS_PTRS->in = &f->synth_a.r7;
 	} else {
-		arm_m_cs_ptrs.in = &f->z.u.hw.r7;
+		ARM_M_CS_PTRS->in = &f->z.u.hw.r7;
 	}
 
 	return padded ? &f->synth_a.base.base : &f->z.u.hw.base;
@@ -434,7 +445,7 @@ static void *arm_m_cpu_to_switch(struct k_thread *th, void *sp, bool fpu)
 #endif
 
 	/* Mark the callee-saved pointer for the fixup assembly */
-	arm_m_cs_ptrs.out = &f->z.u.sw.r4;
+	ARM_M_CS_PTRS->out = &f->z.u.sw.r4;
 
 #ifdef CONFIG_FPU
 	if (fpu) {
@@ -449,6 +460,26 @@ static void *arm_m_cpu_to_switch(struct k_thread *th, void *sp, bool fpu)
 	return &f->z.u.sw;
 #endif
 }
+
+#if defined(CONFIG_SMP) && defined(CONFIG_MULTITHREADING)
+/* Per-CPU part of the interrupt-exit switch state: where the topmost
+ * EXC_RETURN lands on this CPU's interrupt stack, and the fixup address.
+ */
+void arm_m_switch_cpu_init(int cpu)
+{
+	char *stack = (char *)K_KERNEL_STACK_BUFFER(z_interrupt_stacks[cpu]);
+	uint32_t *s_top = (uint32_t *)(stack + K_KERNEL_STACK_SIZEOF(z_interrupt_stacks[cpu]));
+
+	_kernel.cpus[cpu].arch.exc_lr_ptr = &s_top[-1];
+	_kernel.cpus[cpu].arch.cs_ptrs.lr_fixup = (void *)(1 | (uint32_t)arm_m_exc_exit);
+}
+
+/* For arm_m_exc_exit(): this CPU's cs_ptrs */
+struct arm_m_cs_ptrs *arm_m_cs_ptrs_cur(void)
+{
+	return ARM_M_CS_PTRS;
+}
+#endif
 
 void *arm_m_new_stack(char *base, uint32_t sz, void *entry, void *arg0, void *arg1, void *arg2,
 		      void *arg3)
@@ -472,6 +503,9 @@ void *arm_m_new_stack(char *base, uint32_t sz, void *entry, void *arg0, void *ar
 
 	arm_m_exc_lr_ptr = &s_top[-1];
 	arm_m_cs_ptrs.lr_fixup = (void *)(1 | (uint32_t)arm_m_exc_exit); /* thumb bit! */
+#ifdef CONFIG_SMP
+	arm_m_switch_cpu_init(0);
+#endif
 #endif
 
 	baddr = ((uint32_t)base + 7) & ~7;
@@ -523,11 +557,11 @@ bool arm_m_must_switch(void)
 	 * and returning to thread mode.
 	 */
 	if ((IS_ENABLED(CONFIG_ARM_SECURE_FIRMWARE) || IS_ENABLED(CONFIG_ARM_NONSECURE_FIRMWARE)) &&
-	    !is_thread_return((uint32_t)arm_m_cs_ptrs.lr_save)) {
+	    !is_thread_return((uint32_t)ARM_M_CS_PTRS->lr_save)) {
 		return false;
 	}
 
-	struct k_thread *last_thread = _current;
+	struct k_thread *last_thread = ARM_M_CURRENT;
 	void *next = z_sched_next_handle(last_thread);
 
 	if (next == NULL) {
@@ -541,7 +575,7 @@ bool arm_m_must_switch(void)
 bool arm_m_do_switch(struct k_thread *last_thread, void *next)
 {
 	void *last;
-	bool fpu = fpu_state_pushed((uint32_t)arm_m_cs_ptrs.lr_save);
+	bool fpu = fpu_state_pushed((uint32_t)ARM_M_CS_PTRS->lr_save);
 
 	last = (void *)__get_PSP();
 
@@ -569,7 +603,7 @@ bool arm_m_do_switch(struct k_thread *last_thread, void *next)
 	}
 
 	control.w = __get_CONTROL();
-	control.b.nPRIV = _current->arch.mode & 1;
+	control.b.nPRIV = ARM_M_CURRENT->arch.mode & 1;
 	__set_CONTROL(control.w);
 #endif
 
@@ -578,28 +612,38 @@ bool arm_m_do_switch(struct k_thread *last_thread, void *next)
 	__set_PSP((uint32_t)next);
 
 	/* Undo a UDF fixup applied at interrupt time, no need: we're
-	 * restoring EPSR via interrupt.
+	 * restoring EPSR via interrupt.  Only if the frame really resumes at
+	 * the stub: a thread resumed by arch_switch() and interrupted again
+	 * inside its restore sequence (see iciit_fixup()) still has the fixup
+	 * pending, but must first finish that sequence, which ends at the stub.
 	 */
-	if (_current->arch.iciit_pc) {
-		struct hw_frame_base *n = next;
+	struct hw_frame_base *n = next;
 
-		n->pc = _current->arch.iciit_pc;
-		n->apsr = _current->arch.iciit_apsr;
-		_current->arch.iciit_pc = 0;
+	if ((ARM_M_CURRENT->arch.iciit_pc != 0) && pc_match(n->pc, arm_m_iciit_stub)) {
+		n->pc = ARM_M_CURRENT->arch.iciit_pc;
+		n->apsr = ARM_M_CURRENT->arch.iciit_apsr;
+		ARM_M_CURRENT->arch.iciit_pc = 0;
 	}
 
 #if !defined(CONFIG_MULTITHREADING)
 	arm_m_last_switch_handle = last;
+#elif defined(CONFIG_SMP)
+	/* r4-r11 are not in the frame yet: arm_m_exc_exit stores them.
+	 * Another CPU may resume the thread as soon as switch_handle is set,
+	 * so leave that to arm_m_exc_exit too.
+	 */
+	ARM_M_CS_PTRS->handle_ptr = &last_thread->switch_handle;
+	ARM_M_CS_PTRS->handle = last;
 #elif defined(CONFIG_USE_SWITCH)
 	last_thread->switch_handle = last;
 #endif
 
 #if defined(CONFIG_USERSPACE) || defined(CONFIG_MPU_STACK_GUARD)
-	z_arm_configure_dynamic_mpu_regions(_current);
+	z_arm_configure_dynamic_mpu_regions(ARM_M_CURRENT);
 #endif
 
 #ifdef CONFIG_THREAD_LOCAL_STORAGE
-	z_arm_tls_ptr = _current->tls;
+	ARM_M_SET_TLS(ARM_M_CURRENT->tls);
 #endif
 	return true;
 }
@@ -626,13 +670,27 @@ void arm_m_legacy_exit(void)
 __attribute__((naked)) void arm_m_exc_exit(void)
 {
 	__asm__("  bl arm_m_must_switch;"
+#ifdef CONFIG_SMP
+		"  push {r0, r1};" /* keep the 8-byte stack alignment */
+		"  bl arm_m_cs_ptrs_cur;"
+		"  mov r2, r0;"
+		"  pop {r0, r1};"
+#else
 		"  ldr r2, =arm_m_cs_ptrs;"
+#endif
 		"  mov r3, #0;"
 		"  ldr lr, [r2, #8];" /* lr_save */
 		"  cbz r0, 1f;"
 		"  mov lr, #0xfffffffd;" /* integer-only LR */
 		"  ldm r2, {r0, r1};"    /* fields: out, in */
 		"  stm r0, {r4-r11};"    /* out is a switch_frame */
+#ifdef CONFIG_SMP
+		/* Frame complete: publish the outgoing switch handle */
+		"  ldr r0, [r2, #16];"   /* handle_ptr */
+		"  ldr r12, [r2, #20];"  /* handle */
+		"  dmb;"
+		"  str r12, [r0];"
+#endif
 		"  ldm r1!, {r7-r11};"   /* in is a synth_frame */
 		"  ldm r1, {r4-r6};"
 		"1:\n"

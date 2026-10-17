@@ -5,6 +5,11 @@ zephyr_library()
 
 zephyr_library_sources(soc.c)
 zephyr_library_sources_ifdef(CONFIG_RISCV vector.S)
+if(CONFIG_ARM AND CONFIG_SMP)
+  zephyr_library_sources(smp_arm.c)
+  # For <ipi.h> (z_sched_ipi()).
+  zephyr_library_include_directories(${ZEPHYR_BASE}/kernel/include)
+endif()
 zephyr_library_sources_ifdef(CONFIG_MPU mpu_regions.c)
 
 zephyr_library_sources_ifdef(CONFIG_PM power.c)

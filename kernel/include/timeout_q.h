@@ -115,10 +115,23 @@ k_ticks_t z_add_timeout(struct _timeout *to, _timeout_func_t fn, k_timeout_t tim
  *             must drop any lock that the handler may need and retry. A short
  *             arch_spin_relax() has already been done before this return.
  *
- * On -EAGAIN, the only correct response is to drop outer locks and call again.
- * After a non-EAGAIN return, the handler is guaranteed not to be in flight.
+ * On -EAGAIN, the only correct response is to drop outer locks, wait with
+ * z_timeout_wait_inflight() and call again. After a non-EAGAIN return, the
+ * handler is guaranteed not to be in flight.
  */
 int z_try_abort_timeout(struct _timeout *to);
+
+/* Spin, holding no locks, until @to is no longer in flight on another CPU.
+ *
+ * For the -EAGAIN retry loops around z_try_abort_timeout(). The in-flight
+ * handler usually needs the very lock the caller just dropped (the
+ * scheduler's for a thread timeout), and spinlocks are not fair: a caller
+ * that drops it and takes it straight back can win every time against the
+ * handler spinning in k_spin_lock() on the announcing CPU, which livelocks
+ * that CPU inside the timer interrupt. Waiting here first lets the handler
+ * take the lock and finish.
+ */
+void z_timeout_wait_inflight(const struct _timeout *to);
 
 /* True if @to is the currently in-flight timeout and a same-CPU aborter
  * has marked the slot as superseded. Handlers with non-idempotent side

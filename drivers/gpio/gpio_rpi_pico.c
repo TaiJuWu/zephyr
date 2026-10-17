@@ -286,6 +286,34 @@ static int gpio_rpi_port_toggle_bits(const struct device *port,
 	return 0;
 }
 
+/* The core that has IO_IRQ_BANK0 enabled in its NVIC. The interrupt enables
+ * and status of IO_BANK0 are per core: on SMP, a pin configured from another
+ * core would otherwise be enabled in that core's registers, where no handler
+ * sees it, and stay enabled in the handling core's.
+ */
+static uint8_t gpio_rpi_irq_core;
+
+static io_bank0_irq_ctrl_hw_t *gpio_rpi_irq_ctrl(void)
+{
+	return gpio_rpi_irq_core ? &io_bank0_hw->proc1_irq_ctrl : &io_bank0_hw->proc0_irq_ctrl;
+}
+
+/* gpio_set_irq_enabled() for the handling core rather than the calling one */
+static void gpio_rpi_set_irq_enabled(uint32_t gpio, uint32_t events, bool enabled)
+{
+	io_rw_32 *en_reg = &gpio_rpi_irq_ctrl()->inte[gpio / 8];
+
+	/* Clear stale edges, which might cause a spurious interrupt */
+	gpio_acknowledge_irq(gpio, events);
+
+	events <<= 4 * (gpio % 8);
+	if (enabled) {
+		hw_set_bits(en_reg, events);
+	} else {
+		hw_clear_bits(en_reg, events);
+	}
+}
+
 static int gpio_rpi_pin_interrupt_configure(const struct device *dev,
 						gpio_pin_t pin,
 						enum gpio_int_mode mode,
@@ -294,7 +322,7 @@ static int gpio_rpi_pin_interrupt_configure(const struct device *dev,
 	const int offset = GPIO_RPI_PINS_PER_PORT * PORT_NO(dev);
 	uint32_t events = 0;
 
-	gpio_set_irq_enabled(pin + offset, ALL_EVENTS, false);
+	gpio_rpi_set_irq_enabled(pin + offset, ALL_EVENTS, false);
 	if (mode != GPIO_INT_DISABLE) {
 		if (mode & GPIO_INT_EDGE) {
 			if (trig & GPIO_INT_LOW_0) {
@@ -311,7 +339,7 @@ static int gpio_rpi_pin_interrupt_configure(const struct device *dev,
 				events |= GPIO_IRQ_LEVEL_HIGH;
 			}
 		}
-		gpio_set_irq_enabled(pin + offset, events, true);
+		gpio_rpi_set_irq_enabled(pin + offset, events, true);
 	}
 
 	return 0;
@@ -327,8 +355,8 @@ static int gpio_rpi_manage_callback(const struct device *dev,
 
 static uint32_t gpio_rpi_get_pending_int(const struct device *dev)
 {
-	io_bank0_irq_ctrl_hw_t *irq_ctrl_base =
-		get_core_num() ? &io_bank0_hw->proc1_irq_ctrl : &io_bank0_hw->proc0_irq_ctrl;
+	io_bank0_irq_ctrl_hw_t *irq_ctrl_base = gpio_rpi_irq_ctrl();
+
 	ARRAY_FOR_EACH_PTR(irq_ctrl_base->ints, p) {
 		if (*p) {
 			return 1;
@@ -392,8 +420,7 @@ static void gpio_rpi_isr(const struct device *dev)
 	uint32_t events;
 	uint32_t pin;
 
-	irq_ctrl_base = get_core_num() ? &io_bank0_hw->proc1_irq_ctrl
-				       : &io_bank0_hw->proc0_irq_ctrl;
+	irq_ctrl_base = gpio_rpi_irq_ctrl();
 	for (pin = 0; pin < NUM_BANK0_GPIOS; pin++) {
 		status_reg = &irq_ctrl_base->ints[pin / 8];
 		events = (*status_reg >> 4 * (pin % 8)) & ALL_EVENTS;
@@ -454,6 +481,7 @@ static int gpio_rpi_bank_init(const struct device *dev)
 			IRQ_CONNECT(DT_IRQN(DT_INST_PARENT(idx)),                                  \
 				    DT_IRQ(DT_INST_PARENT(idx), priority),                         \
 				    gpio_rpi_isr, DEVICE_DT_INST_GET(idx), 0);                     \
+			gpio_rpi_irq_core = get_core_num();                                        \
 			irq_enable(DT_IRQN(DT_INST_PARENT(idx)));                                  \
 		}                                                                                  \
 	))                                                                                         \
