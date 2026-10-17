@@ -54,10 +54,6 @@ int airoc_wifi_init_primary(const struct device *dev, whd_interface_t *interface
 		.intr_priority = CY_WIFI_OOB_INTR_PRIORITY};
 	whd_spi_config.oob_config = oob_config;
 #endif
-#if defined(SPI_DATA_IRQ_SHARED)
-	data->prev_irq_state = 0;
-#endif
-
 	/* Pull bus select line low before enabling WiFi chip */
 	gpio_pin_configure_dt(&config->bus_select_gpio, GPIO_OUTPUT_INACTIVE);
 
@@ -242,7 +238,6 @@ whd_result_t whd_bus_spi_irq_enable(whd_driver_t whd_driver, whd_bool_t enable)
 #if defined(SPI_DATA_IRQ_SHARED)
 	const struct device *dev = DEVICE_DT_INST_GET(0);
 	const struct airoc_wifi_config *config = dev->config;
-	struct airoc_wifi_data *data = dev->data;
 
 	if (enable) {
 		ret = pinctrl_apply_state(config->pcfg, PINCTRL_STATE_HOST_WAKE);
@@ -255,14 +250,16 @@ whd_result_t whd_bus_spi_irq_enable(whd_driver_t whd_driver, whd_bool_t enable)
 		int state = gpio_pin_get_dt(gpio);
 		int expected_event = (oob_config->is_falling_edge == WHD_TRUE) ? 0 : 1;
 
-		/* Notify only if interrupt wasn't assert before. This code assumes that if */
-		/* the interrupt was previously asserted, then the thread has already been  */
-		/* notified.                                                                */
-		if (state == expected_event && state != data->prev_irq_state) {
+		/* Notify whenever the line is asserted. The interrupt was off during the */
+		/* transfer, and an edge from before it may never have been delivered: on */
+		/* SMP the ISR can run on another core after the interrupt was disabled   */
+		/* here, find nothing pending and drop it. Skipping the notify because    */
+		/* the line was already asserted then leaves the WHD thread asleep while  */
+		/* the chip holds HOST_WAKE. A spurious notify only costs a status read.  */
+		if (state == expected_event) {
 			whd_thread_notify_irq(whd_driver);
 		}
 	} else {
-		data->prev_irq_state = gpio_pin_get_dt(gpio);
 		ret = gpio_pin_interrupt_configure_dt(gpio, GPIO_INT_DISABLE);
 		__ASSERT(ret == 0, "gpio_pin_interrupt_configure_dt failed, return code %d", ret);
 		pinctrl_apply_state(config->pcfg, PINCTRL_STATE_DEFAULT);

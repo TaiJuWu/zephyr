@@ -64,9 +64,6 @@ struct airoc_wifi_data {
 	struct sdio_func sdio_func1;
 	struct sdio_func sdio_func2;
 #endif
-#if defined(SPI_DATA_IRQ_SHARED)
-	uint8_t prev_irq_state;
-#endif
 	struct net_if *iface;
 	bool second_interface_init;
 	bool is_ap_up;
