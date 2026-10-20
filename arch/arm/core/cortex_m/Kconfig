@@ -529,6 +529,7 @@ config ARM_FP_CLOBBER_WORKAROUND
 	depends on USE_SWITCH
 	default y if FRAME_POINTER
 	default y if SCHED_SCALABLE
+	default y if SMP && NO_OPTIMIZATIONS
 	help
 	  Enables a two-instruction workaround for a GNU and clang toolchain
 	  limitation in which inline assembly cannot clobber the frame pointer.
