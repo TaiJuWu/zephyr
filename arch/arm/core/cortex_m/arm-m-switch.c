@@ -474,8 +474,10 @@ void arm_m_switch_cpu_init(int cpu)
 	_kernel.cpus[cpu].arch.cs_ptrs.lr_fixup = (void *)(1 | (uint32_t)arm_m_exc_exit);
 }
 
-/* For arm_m_exc_exit(): this CPU's cs_ptrs */
-struct arm_m_cs_ptrs *arm_m_cs_ptrs_cur(void)
+/* For arm_m_exc_exit(): this CPU's cs_ptrs. Only referenced from its
+ * assembly, so keep it under LTO.
+ */
+__used struct arm_m_cs_ptrs *arm_m_cs_ptrs_cur(void)
 {
 	return ARM_M_CS_PTRS;
 }
