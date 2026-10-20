@@ -78,7 +78,11 @@ static FUNC_NORETURN void secondary_entry(void)
 	z_arm_fault_init();
 	z_arm_cpu_idle_init();
 	z_arm_clear_faults();
+#if defined(CONFIG_ARM_CUSTOM_INTERRUPT_CONTROLLER)
+	z_soc_irq_init();
+#else
 	z_arm_interrupt_init();
+#endif
 #if defined(CONFIG_ARM_MPU)
 	z_arm_mpu_init();
 	z_arm_configure_static_mpu_regions();
