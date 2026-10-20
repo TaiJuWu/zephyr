@@ -17,6 +17,9 @@ config BUILD_OUTPUT_UF2_USE_FLASH_OFFSET
 config NUM_IRQS
 	default 52
 
+config MP_MAX_NUM_CPUS
+	default 2 if SMP && RISCV
+
 DT_CLK_SYS_PATH := $(dt_nodelabel_path,clk_sys)
 
 config SYS_CLOCK_HW_CYCLES_PER_SEC
