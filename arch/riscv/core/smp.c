@@ -100,13 +100,14 @@ void arch_secondary_cpu_init(int hartid)
 #ifdef CONFIG_CUSTOM_STACK_GUARD
 	z_riscv_custom_stack_guard_init();
 #endif /* CONFIG_CUSTOM_STACK_GUARD */
-#ifdef CONFIG_SMP
+#if defined(CONFIG_SMP) && !defined(CONFIG_RISCV_SMP_IPI_CUSTOM)
+	/* A custom IPI backend enables its own interrupt (see arch_smp_init()). */
 #ifdef CONFIG_RISCV_S_MODE_EXTERNAL_SBI
 	irq_enable(RISCV_IRQ_SSOFT);
 #else
 	irq_enable(RISCV_IRQ_MSOFT);
 #endif
-#endif /* CONFIG_SMP */
+#endif /* CONFIG_SMP && !CONFIG_RISCV_SMP_IPI_CUSTOM */
 #if defined(CONFIG_PLIC_IRQ_AFFINITY) || defined(CONFIG_RISCV_APLIC_DIRECT_IRQ_AFFINITY)
 	/* Enable on secondary cores so that they can respond to PLIC */
 #ifdef CONFIG_RISCV_S_MODE_EXTERNAL_SBI
