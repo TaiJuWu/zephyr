@@ -34,4 +34,11 @@ config RISCV_MACHINE_TIMER_SYSTEM_CLOCK_DIVIDER
 	  and it is desirable usage that references it with using a function such as
 	  dt_node_int_prop_int from Kconfig. (Tune in the conf file is not preferable.)
 
+config RISCV_MACHINE_TIMER_BANKED_MTIMECMP
+	bool
+	help
+	  Each hart sees its own mtimecmp at the same address, instead of the
+	  CLINT layout where hart N's comparator is at mtimecmp + 8 * N
+	  (e.g. the RP2350 SIO MTIMECMP register).
+
 endif

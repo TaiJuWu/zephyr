@@ -23,7 +23,11 @@ const int32_t z_sys_timer_irq_for_test = TIMER_IRQN;
 
 static uintptr_t get_hart_mtimecmp(void)
 {
+#ifdef CONFIG_RISCV_MACHINE_TIMER_BANKED_MTIMECMP
+	return MTIMECMP_REG;
+#else
 	return MTIMECMP_REG + (arch_proc_id() * 8);
+#endif
 }
 
 static void set_mtimecmp(uint64_t time)
