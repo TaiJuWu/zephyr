@@ -161,6 +161,27 @@
 			interrupt-parent = <&intc>;
 		};
 
+		systimer0: systimer@60023000 {
+			compatible = "espressif,esp32-systimer";
+			reg = <0x60023000 0x80>;
+			interrupts = <SYSTIMER_TARGET0_EDGE_INTR_SOURCE IRQ_DEFAULT_PRIORITY 0>;
+			interrupt-parent = <&intc>;
+		};
+
+		ipi0: ipi@600c0030 {
+			compatible = "espressif,crosscore-interrupt";
+			reg = <0x600c0030 0x4>;
+			interrupts = <FROM_CPU_INTR0_SOURCE IRQ_DEFAULT_PRIORITY 0>;
+			interrupt-parent = <&intc>;
+		};
+
+		ipi1: ipi@600c0034 {
+			compatible = "espressif,crosscore-interrupt";
+			reg = <0x600c0034 0x4>;
+			interrupts = <FROM_CPU_INTR1_SOURCE IRQ_DEFAULT_PRIORITY 0>;
+			interrupt-parent = <&intc>;
+		};
+
 		mbox0: mbox@3fce9408 {
 			compatible = "espressif,mbox-esp32";
 			reg = <0x3fce9408 0x8>;
