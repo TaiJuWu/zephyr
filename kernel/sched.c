@@ -567,6 +567,12 @@ struct k_thread *z_unpend1_no_timeout(_wait_q_t *wait_q)
 	return thread;
 }
 
+/* timeout_livelock instrumentation (not for upstream): -EAGAIN retries in
+ * z_unpend_thread(), updated under the scheduler lock.
+ */
+uint32_t tl_retry_calls, tl_retry_max;
+uint64_t tl_retry_iters, tl_retry_cyc_max;
+
 void z_unpend_thread(struct k_thread *thread)
 {
 	k_spinlock_key_t key = z_sched_spinlock_lock();
@@ -574,9 +580,21 @@ void z_unpend_thread(struct k_thread *thread)
 	if (thread->base.pended_on != NULL) {
 		unpend_thread_no_timeout(thread);
 	}
+	uint32_t tl_n = 0;
+	uint64_t tl_t0 = k_cycle_get_64();
+
 	while (z_try_abort_thread_timeout(thread) == -EAGAIN) {
+		tl_n++;
 		z_sched_spinlock_unlock(key);
 		key = z_sched_spinlock_lock();
+	}
+	if (tl_n != 0) {
+		uint64_t tl_d = k_cycle_get_64() - tl_t0;
+
+		tl_retry_calls++;
+		tl_retry_iters += tl_n;
+		tl_retry_max = MAX(tl_retry_max, tl_n);
+		tl_retry_cyc_max = MAX(tl_retry_cyc_max, tl_d);
 	}
 	z_sched_spinlock_unlock(key);
 }
