@@ -16,6 +16,21 @@ config BOOTLOADER_MCUBOOT
 config MAIN_STACK_SIZE
 	default 4096
 
+if SMP
+
+config SCHED_CPU_MASK
+	default y if SCHED_SIMPLE
+
+config MP_MAX_NUM_CPUS
+	default 2
+
+# Each CPU's CCOUNT starts at its own reset, so the two disagree (by the
+# time the APP CPU was started); SMP needs the shared SYSTIMER.
+config XTENSA_TIMER
+	default n
+
+endif # SMP
+
 if PM && TICKLESS_KERNEL
 
 choice XTENSA_TIMER_LPM_TIMER
