@@ -16,6 +16,12 @@
 
 static struct k_spinlock timer_lock;
 
+/* Timer whose expiry z_timer_expiration_handler() is delivering, from its
+ * entry check until it returns; NULL otherwise. Only one timeout handler
+ * is in flight at a time. Protected by timer_lock.
+ */
+static struct k_timer *expiring_timer;
+
 #ifdef CONFIG_OBJ_CORE_TIMER
 K_OBJ_TYPE_DEFINE(obj_type_timer, k_timer, K_OBJ_TYPE_TIMER_ID, NULL);
 #endif /* CONFIG_OBJ_CORE_TIMER */
@@ -89,6 +95,8 @@ void z_timer_expiration_handler(struct _timeout *t)
 		return;
 	}
 
+	expiring_timer = timer;
+
 	/*
 	 * if the timer is periodic, start it again; don't add _TICK_ALIGN
 	 * since we're already aligned to a tick boundary
@@ -134,6 +142,7 @@ void z_timer_expiration_handler(struct _timeout *t)
 	}
 
 	if (!IS_ENABLED(CONFIG_MULTITHREADING)) {
+		expiring_timer = NULL;
 		k_spin_unlock(&timer_lock, key);
 		return;
 	}
@@ -148,6 +157,7 @@ void z_timer_expiration_handler(struct _timeout *t)
 		}
 	}
 
+	expiring_timer = NULL;
 	k_spin_unlock(&timer_lock, key);
 
 }
@@ -305,11 +315,16 @@ void z_impl_k_timer_stop(struct k_timer *timer)
 
 	(void)z_try_abort_timeout(&timer->timeout);
 
-	if (!armed) {
-		/* Not removed from the queue: either the timer was not
-		 * active, or its handler is in flight. In the latter case
-		 * z_try_abort_timeout() has flagged it superseded so the
-		 * handler bails; we do not wait for it. Nothing to stop here.
+	/* A handler in flight that has not reached its entry check yet
+	 * (it needs timer_lock) will bail on the superseded mark set by the
+	 * abort, so this stop cancels that expiry as well: run stop_fn and
+	 * release a waiter in its place. One that is past the check
+	 * delivers the expiry itself.
+	 */
+	if (!armed && !(z_timeout_inflight_superseded(&timer->timeout) &&
+			expiring_timer != timer)) {
+		/* The timer was not active, or its expiry is being
+		 * delivered. Nothing to stop here.
 		 */
 		k_spin_unlock(&timer_lock, key);
 		return;
