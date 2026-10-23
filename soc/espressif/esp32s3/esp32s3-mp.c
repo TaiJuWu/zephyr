@@ -47,12 +47,80 @@ static mem_addr_t ipi_reg(int cpu)
 	return cpu == 0 ? SYSTEM_CPU_INTR_FROM_CPU_0_REG : SYSTEM_CPU_INTR_FROM_CPU_1_REG;
 }
 
+/* A flash operation suspends the cache, so while one CPU erases or writes
+ * flash the other must not fetch from it either. The HAL brackets every
+ * flash operation with soc_mp_pause_others()/soc_mp_resume_others(), which
+ * park the other CPU in IRAM with interrupts locked for the duration.
+ */
+static atomic_t pause_lock;
+static volatile bool pause_req;
+static volatile bool paused;
+static unsigned int pause_key;
+
+IRAM_ATTR static void park(void)
+{
+	unsigned int key = arch_irq_lock();
+
+	paused = true;
+	while (pause_req) {
+	}
+	paused = false;
+
+	arch_irq_unlock(key);
+}
+
 IRAM_ATTR static void esp_crosscore_isr(void *arg)
 {
 	ARG_UNUSED(arg);
 
 	REG_WRITE(ipi_reg(esp_core_id()), 0);
+	if (pause_req) {
+		park();
+	}
 	z_sched_ipi();
+}
+
+IRAM_ATTR void soc_mp_pause_others(void)
+{
+	unsigned int key;
+	int other;
+
+	/* Spin for the lock with interrupts enabled, so that a CPU holding
+	 * it can still park this one. Lock them once it is taken: the thread
+	 * must stay on this CPU until it resumes the other.
+	 */
+	for (;;) {
+		key = arch_irq_lock();
+		if (atomic_cas(&pause_lock, 0, 1)) {
+			break;
+		}
+		arch_irq_unlock(key);
+	}
+	pause_key = key;
+
+	other = esp_core_id() ^ 1;
+	if (!cpus_active[other]) {
+		return;
+	}
+
+	pause_req = true;
+	REG_WRITE(ipi_reg(other), SYSTEM_CPU_INTR_FROM_CPU_0);
+	while (!paused) {
+	}
+}
+
+IRAM_ATTR void soc_mp_resume_others(void)
+{
+	unsigned int key = pause_key;
+
+	if (pause_req) {
+		pause_req = false;
+		while (paused) {
+		}
+	}
+
+	atomic_clear(&pause_lock);
+	arch_irq_unlock(key);
 }
 
 /* CPU interrupt number of the cross-core interrupt, the same on both CPUs.
