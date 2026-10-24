@@ -186,13 +186,28 @@ static int sys_clock_driver_init(void)
 	systimer_hal_enable_counter(&systimer_hal, SYSTIMER_COUNTER_OS_TICK);
 	systimer_hal_counter_can_stall_by_cpu(&systimer_hal, SYSTIMER_COUNTER_OS_TICK, 0, true);
 #if defined(CONFIG_SMP)
-	systimer_hal_counter_can_stall_by_cpu(&systimer_hal, SYSTIMER_COUNTER_OS_TICK, 1, true);
+	/* The second CPU is held in stall until SMP starts it, and the reset
+	 * value lets it stall the counter: keep the counter running until
+	 * smp_timer_init().
+	 */
+	systimer_hal_counter_can_stall_by_cpu(&systimer_hal, SYSTIMER_COUNTER_OS_TICK, 1, false);
 #endif
 
 	/* Seed the announce baseline from the systimer and arm the first tick. */
 	timer_core_init();
 	return 0;
 }
+
+#ifdef CONFIG_SMP
+/* Runs on the second CPU once it is up. The counter is shared and its alarm
+ * interrupt stays on the CPU that allocated it; the other CPUs are reached
+ * through IPIs. Only now let this CPU stall the counter (for the debugger).
+ */
+void smp_timer_init(void)
+{
+	systimer_hal_counter_can_stall_by_cpu(&systimer_hal, SYSTIMER_COUNTER_OS_TICK, 1, true);
+}
+#endif
 
 SYS_INIT(sys_clock_driver_init, PRE_KERNEL_2,
 	 CONFIG_SYSTEM_CLOCK_INIT_PRIORITY);

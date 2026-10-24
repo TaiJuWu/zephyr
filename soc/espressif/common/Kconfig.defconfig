@@ -89,10 +89,11 @@ config SOC_FLASH_ESP32
 	default y
 
 config SYS_CLOCK_HW_CYCLES_PER_SEC
+	default 16000000 if ESP32_SYS_TIMER
 	default $(dt_node_int_prop_int,/cpus/cpu@0,clock-frequency)
 
 config XTENSA_CCOUNT_HZ
-	default SYS_CLOCK_HW_CYCLES_PER_SEC
+	default $(dt_node_int_prop_int,/cpus/cpu@0,clock-frequency)
 
 config MINIMAL_LIBC_OPTIMIZE_STRING_FOR_SIZE
 	default n
