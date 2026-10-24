@@ -343,15 +343,21 @@ void z_thread_halt(struct k_thread *thread, k_spinlock_key_t key,
 		 * halt_thread() and could not retry on -EAGAIN; an
 		 * in-flight handler on a third CPU may not have run yet
 		 * (it is blocked on the scheduler spinlock and will only
-		 * acquire it after we drop it via the swap/spin above). Wait
-		 * now, outside any lock, before the caller may free the thread
-		 * storage. The handler, when it runs, sees _THREAD_DEAD /
-		 * _THREAD_SUSPENDED and either bails (killed check) or
-		 * no-ops in ready_thread() (z_is_thread_ready() rejects
-		 * suspended threads). After this loop returns, no further
-		 * dereference of thread->base will occur.
+		 * acquire it after we drop it via the swap/spin above). When
+		 * aborting, wait now, outside any lock, before the caller may
+		 * free the thread storage. The handler, when it runs, sees
+		 * _THREAD_DEAD and bails (killed check). After this loop
+		 * returns, no further dereference of thread->base will occur.
+		 *
+		 * A suspended thread keeps its timeout: the target may have
+		 * linked one (k_sleep(), a timed wait) after the suspend was
+		 * requested and before it halted, and suspension must not
+		 * cancel it. If that timeout fires while the thread is
+		 * suspended, ready_thread() leaves the thread alone
+		 * (z_is_thread_ready() rejects suspended threads) and
+		 * k_thread_resume() readies it.
 		 */
-		while (z_try_abort_thread_timeout(thread) == -EAGAIN) {
+		while (terminate && z_try_abort_thread_timeout(thread) == -EAGAIN) {
 		}
 	} else {
 		halt_thread(thread, terminate ? _THREAD_DEAD : _THREAD_SUSPENDED, &key);
