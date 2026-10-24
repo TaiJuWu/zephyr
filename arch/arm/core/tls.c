@@ -18,6 +18,21 @@
  * instead.
  */
 K_APP_DMEM(z_libc_partition) uintptr_t z_arm_tls_ptr;
+
+#if defined(CONFIG_SMP) && defined(CONFIG_CPU_CORTEX_M)
+/* Called from __aeabi_read_tp(): the TLS pointer of the thread running on
+ * this CPU. Interrupts are masked so the thread cannot migrate between
+ * reading the CPU id and the pointer.
+ */
+uintptr_t z_arm_smp_tls_ptr_get(void)
+{
+	unsigned int key = arch_irq_lock();
+	uintptr_t p = arch_curr_cpu()->arch.tls_ptr;
+
+	arch_irq_unlock(key);
+	return p;
+}
+#endif
 #endif
 
 size_t arch_tls_stack_setup(struct k_thread *new_thread, char *stack_ptr)

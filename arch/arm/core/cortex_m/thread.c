@@ -581,6 +581,10 @@ void arch_switch_to_main_thread(struct k_thread *main_thread, char *stack_ptr,
 	z_arm_prepare_switch_to_main();
 
 	z_current_thread_set(main_thread);
+#ifdef CONFIG_USE_SWITCH
+	/* Running threads have a NULL switch handle (see do_swap()). */
+	main_thread->switch_handle = NULL;
+#endif
 
 #if defined(CONFIG_THREAD_LOCAL_STORAGE)
 	/* On Cortex-M, TLS uses a global variable as pointer to
@@ -592,6 +596,9 @@ void arch_switch_to_main_thread(struct k_thread *main_thread, char *stack_ptr,
 	extern uintptr_t z_arm_tls_ptr;
 
 	z_arm_tls_ptr = main_thread->tls;
+#ifdef CONFIG_SMP
+	arch_curr_cpu()->arch.tls_ptr = main_thread->tls;
+#endif
 #endif
 
 #ifdef CONFIG_INSTRUMENT_THREAD_SWITCHING

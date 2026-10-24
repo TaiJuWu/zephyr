@@ -87,7 +87,8 @@ TOOLCHAIN_ENABLE_WARNING(TOOLCHAIN_WARNING_NONNULL)
 #endif /* CONFIG_CPU_CORTEX_M_HAS_VTOR */
 
 #if defined(CONFIG_CPU_HAS_FPU)
-static inline void z_arm_floating_point_init(void)
+/* Also run by secondary cores on SMP (arch/arm/core/cortex_m/smp.c). */
+void z_arm_floating_point_init(void)
 {
 	/*
 	 * Upon reset, the Co-Processor Access Control Register is, normally,

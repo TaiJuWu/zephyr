@@ -229,6 +229,7 @@ config ARMV7_M_ARMV8_M_MAINLINE
 	select CPU_CORTEX_M_HAS_PROGRAMMABLE_FAULT_PRIOS
 	select CPU_CORTEX_M_HAS_SYSTICK
 	select USE_SWITCH_SUPPORTED if !TRUSTED_EXECUTION_NONSECURE
+	select SCHED_IPI_SUPPORTED if SMP
 	select ARCH_HAS_LLEXT_VENEERS
 	select ARCH_HAS_BIT_REV
 	help
@@ -528,6 +529,7 @@ config ARM_FP_CLOBBER_WORKAROUND
 	depends on USE_SWITCH
 	default y if FRAME_POINTER
 	default y if SCHED_SCALABLE
+	default y if SMP && NO_OPTIMIZATIONS
 	help
 	  Enables a two-instruction workaround for a GNU and clang toolchain
 	  limitation in which inline assembly cannot clobber the frame pointer.
