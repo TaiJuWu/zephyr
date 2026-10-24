@@ -24,6 +24,7 @@
 #include <esp_flash_encrypt.h>
 #include <esp_flash_internal.h>
 #include <bootloader_flash_priv.h>
+#include <esp_memory_utils.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -367,6 +368,31 @@ static bool flash_esp32_is_aligned(off_t address, void *buffer, size_t length)
 }
 #endif
 
+#if defined(CONFIG_ESP_SPIRAM) && !defined(CONFIG_MCUBOOT)
+/*
+ * Flash operations run with the cache disabled, and PSRAM is only reachable
+ * through the cache. A caller running on a stack in PSRAM faults on its first
+ * stack access, and so does the exception handler on that same stack: the CPU
+ * is left in a double exception.
+ */
+static int flash_esp32_check_stack(void)
+{
+	uint8_t here;
+
+	if (esp_ptr_external_ram(&here)) {
+		LOG_ERR("Flash access from a stack in PSRAM, use CONFIG_ESP_FLASH_ASYNC");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+#else
+static inline int flash_esp32_check_stack(void)
+{
+	return 0;
+}
+#endif
+
 static int flash_esp32_read(const struct device *dev, off_t address, void *buffer, size_t length)
 {
 	int ret = 0;
@@ -423,6 +449,11 @@ static int flash_esp32_read(const struct device *dev, off_t address, void *buffe
 		}
 	}
 #else
+	ret = flash_esp32_check_stack();
+	if (ret != 0) {
+		return ret;
+	}
+
 	flash_esp32_sem_take(dev);
 	ret = flash_esp32_read_check_enc(address, buffer, length);
 	flash_esp32_sem_give(dev);
@@ -451,6 +482,11 @@ static int flash_esp32_write(const struct device *dev, off_t address, const void
 
 	ret = esp_rom_flash_write(address, (void *)buffer, length, encrypt);
 #else
+	ret = flash_esp32_check_stack();
+	if (ret != 0) {
+		return ret;
+	}
+
 	flash_esp32_sem_take(dev);
 
 #ifdef CONFIG_ESP_FLASH_ENCRYPTION
@@ -489,6 +525,11 @@ static int flash_esp32_erase(const struct device *dev, off_t start, size_t len)
 #ifdef CONFIG_MCUBOOT
 	ret = esp_rom_flash_erase_range(start, len);
 #else
+	ret = flash_esp32_check_stack();
+	if (ret != 0) {
+		return ret;
+	}
+
 	flash_esp32_sem_take(dev);
 
 #ifdef CONFIG_ESP_FLASH_ENCRYPTION
