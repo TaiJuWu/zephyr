@@ -263,6 +263,40 @@ ZTEST(cache_coex, test_ram_integrity)
 	zassert_equal(true, coex_result.psram_ok, "SPIRAM integrity test failed");
 }
 
+/* Flash operations disable the cache, the only path to PSRAM, so the driver
+ * must turn away a caller whose stack is in PSRAM instead of letting it fault.
+ * With CONFIG_ESP_FLASH_ASYNC the operations run on the flash work queue
+ * stack instead, and succeed.
+ */
+Z_KERNEL_STACK_DEFINE_IN(psram_stack, STACKSIZE, Z_GENERIC_SECTION(.ext_ram.bss));
+static struct k_thread psram_stack_thread;
+static int psram_stack_rc[3];
+
+static void flash_from_psram_stack(void *p1, void *p2, void *p3)
+{
+	psram_stack_rc[0] = flash_read(flash_dev, page_info.start_offset, flash_read_buff,
+				       sizeof(flash_read_buff));
+	psram_stack_rc[1] = flash_erase(flash_dev, page_info.start_offset, page_info.size);
+	psram_stack_rc[2] = flash_write(flash_dev, page_info.start_offset, flash_fill_buff,
+					sizeof(flash_fill_buff));
+}
+
+ZTEST(cache_coex, test_flash_from_psram_stack)
+{
+	zassert_true(esp_ptr_external_ram(psram_stack), "stack is not in PSRAM");
+
+	k_thread_create(&psram_stack_thread, psram_stack, K_KERNEL_STACK_SIZEOF(psram_stack),
+			flash_from_psram_stack, NULL, NULL, NULL, PRIORITY, 0, K_NO_WAIT);
+	zassert_ok(k_thread_join(&psram_stack_thread, K_SECONDS(5)), "flash access hung");
+
+	int expected = IS_ENABLED(CONFIG_ESP_FLASH_ASYNC) ? 0 : -EINVAL;
+
+	for (size_t i = 0; i < ARRAY_SIZE(psram_stack_rc); i++) {
+		zassert_equal(psram_stack_rc[i], expected, "operation %zu returned %d", i,
+			      psram_stack_rc[i]);
+	}
+}
+
 void *cache_coex_setup(void)
 {
 	while (unfinished_tasks) {
