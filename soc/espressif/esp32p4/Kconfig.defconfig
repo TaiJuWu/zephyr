@@ -50,6 +50,12 @@ choice CACHE_TYPE
 	default EXTERNAL_CACHE if CACHE_MANAGEMENT
 endchoice
 
+config MP_MAX_NUM_CPUS
+	default 2 if SMP
+
+config PM_CPU_OPS
+	default y if SMP
+
 config MAIN_STACK_SIZE
 	default 2048
 

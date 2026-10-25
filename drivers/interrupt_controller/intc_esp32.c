@@ -230,7 +230,15 @@ static bool intr_has_handler(int intr, int cpu)
 	intr += CONFIG_RISCV_RESERVED_IRQ_ISR_TABLES_OFFSET;
 #endif
 
+#ifdef CONFIG_RISCV
+	/* RISC-V has one ISR table shared by all cores: a line taken on any
+	 * core is taken on all of them.
+	 */
+	ARG_UNUSED(cpu);
+	return _sw_isr_table[intr].isr != z_irq_spurious;
+#else
 	return _sw_isr_table[intr * CONFIG_MP_MAX_NUM_CPUS + cpu].isr != z_irq_spurious;
+#endif
 }
 
 static bool is_vect_desc_usable(struct vector_desc_t *vd, int flags, int cpu, int force)

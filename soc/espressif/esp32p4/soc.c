@@ -115,6 +115,13 @@ void IRAM_ATTR __esp_platform_app_start(void)
 			 : "t0");
 #endif
 
+#ifdef CONFIG_SMP
+	/* arch_curr_cpu() reads mscratch under SMP, and the hal code below takes
+	 * spinlocks before z_cstart() would set it.
+	 */
+	__asm__ volatile("csrw mscratch, %0" : : "r"(&_kernel.cpus[0]));
+#endif
+
 	core_intr_matrix_clear();
 
 	esp_reset_reason_init();

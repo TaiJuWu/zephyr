@@ -104,6 +104,15 @@ static void IRAM_ATTR sys_timer_isr(void *arg)
 	timer_core_announce();
 }
 
+#ifdef CONFIG_SMP
+void smp_timer_init(void)
+{
+	/* The tick alarm interrupts CPU0 only. Timeouts that expire there
+	 * reach the other CPUs through the scheduler IPI.
+	 */
+}
+#endif
+
 void sys_clock_disable(void)
 {
 	stopped_cycles = get_systimer_alarm();

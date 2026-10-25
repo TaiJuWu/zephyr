@@ -76,14 +76,14 @@ int hardware_init(void)
 	 * that the ROM bootloader leaves in a locked state.
 	 */
 	cache_hal_config_t cache_config = {
-		.core_nums = 1,
+		.core_nums = CONFIG_MP_MAX_NUM_CPUS,
 		.l2_cache_size = CONFIG_ESP32_CACHE_L2_SIZE,
 		.l2_cache_line_size = CONFIG_ESP32_CACHE_L2_LINE_SIZE,
 	};
 	cache_hal_init(&cache_config);
 
 	mmu_hal_config_t mmu_config = {
-		.core_nums = 1,
+		.core_nums = CONFIG_MP_MAX_NUM_CPUS,
 		.mmu_page_size = CONFIG_MMU_PAGE_SIZE,
 	};
 	mmu_hal_ctx_init(&mmu_config);

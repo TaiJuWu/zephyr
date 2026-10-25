@@ -33,7 +33,11 @@ void __esp_platform_app_start(void);
 
 static inline uint32_t esp_core_id(void)
 {
-	return 0;
+	uint32_t id;
+
+	__asm__ volatile("csrr %0, mhartid" : "=r"(id));
+
+	return id;
 }
 
 extern int esp_rom_gpio_matrix_in(uint32_t gpio, uint32_t signal_index, bool inverted);
