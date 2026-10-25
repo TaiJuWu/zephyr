@@ -891,9 +891,15 @@ static ALWAYS_INLINE void halt_thread(struct k_thread *thread, uint8_t new_state
 			 * z_thread_halt() returns.
 			 */
 			if (key != NULL) {
+				/* Drop the lock so the handler can finish, but
+				 * keep interrupts masked: the thread may be
+				 * _current and is already dead, so an interrupt
+				 * here would switch away from it for good and
+				 * the joiners below would never be woken.
+				 */
 				while (z_try_abort_thread_timeout(thread) == -EAGAIN) {
-					z_sched_spinlock_unlock(*key);
-					*key = z_sched_spinlock_lock();
+					z_sched_spinlock_release();
+					(void)z_sched_spinlock_lock();
 				}
 			}
 			unpend_all(&thread->join_queue);
