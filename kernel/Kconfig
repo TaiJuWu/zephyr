@@ -785,6 +785,15 @@ config TIMEOUT_64BIT
 	  availability of absolute timeout values (which require the
 	  extra precision).
 
+config TIMEOUT_INFLIGHT_TEST_HOOK
+	bool "Test hook for in-flight timeouts"
+	depends on ZTEST
+	help
+	  Call z_timeout_inflight_test_hook(), which the test defines, after a
+	  due timeout has been taken off the queue and before its handler
+	  runs, with no lock held. Lets a test hold a timeout in flight to
+	  check what wakers do in that window. For tests only.
+
 choice TIMEOUT_BACKEND
 	prompt "Timeout queue backend"
 	default TIMEOUT_BACKEND_DLIST

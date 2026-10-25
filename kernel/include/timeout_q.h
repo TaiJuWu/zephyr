@@ -127,6 +127,19 @@ int z_try_abort_timeout(struct _timeout *to);
  */
 bool z_timeout_inflight_superseded(const struct _timeout *to);
 
+#ifdef CONFIG_TIMEOUT_INFLIGHT_TEST_HOOK
+/* Called by the announce loop with no lock held, after @to has been taken
+ * off the queue and marked in flight, and before its handler runs. A test
+ * defines it to hold a timeout in that state.
+ */
+void z_timeout_inflight_test_hook(struct _timeout *to);
+#else
+static inline void z_timeout_inflight_test_hook(struct _timeout *to)
+{
+	ARG_UNUSED(to);
+}
+#endif /* CONFIG_TIMEOUT_INFLIGHT_TEST_HOOK */
+
 static inline void z_init_thread_timeout(struct _thread_base *thread_base)
 {
 	z_init_timeout(&thread_base->timeout);

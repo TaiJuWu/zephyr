@@ -398,6 +398,7 @@ void sys_clock_announce_locked(uint32_t ticks, k_spinlock_key_t key)
 			inflight_timeout = t;
 
 			k_spin_unlock(&timeout_lock, key);
+			z_timeout_inflight_test_hook(t);
 			handler(t);
 			key = k_spin_lock(&timeout_lock);
 			inflight_timeout = NULL;
