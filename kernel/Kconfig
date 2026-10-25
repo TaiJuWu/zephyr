@@ -774,6 +774,17 @@ config SYS_CLOCK_EXISTS
 	  this is disabled.  Obviously timeout-related APIs will not
 	  work when disabled.
 
+config SYS_CLOCK_INITIAL_TICKS
+	hex "Tick count at boot"
+	default 0x0
+	depends on SYS_CLOCK_EXISTS
+	help
+	  Start the system tick count at this value instead of 0. Set it a
+	  little below a power of two, such as 2^32, to make bugs in code
+	  that keeps ticks or uptime in narrower types show up soon after
+	  boot rather than after days, as FreeBSD does with its tick
+	  counter. Uptime reported by the kernel includes this offset.
+
 config TIMEOUT_64BIT
 	bool "Store kernel timeouts in 64 bit precision"
 	default y

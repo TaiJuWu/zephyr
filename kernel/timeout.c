@@ -16,8 +16,8 @@
 
 #include <timeslicing.h>
 
-/* Absolute tick counter: ticks since boot. */
-static uint64_t curr_tick;
+/* Absolute tick counter: ticks since boot, plus CONFIG_SYS_CLOCK_INITIAL_TICKS. */
+static uint64_t curr_tick = CONFIG_SYS_CLOCK_INITIAL_TICKS;
 
 /*
  * The timeout code shall take no locks other than its own (timeout_lock), nor
