@@ -39,7 +39,7 @@ static void IRAM_ATTR send_ipi(unsigned int cpu, int reason)
 	crosscore_int_ll_trigger_interrupt(_kernel.cpus[cpu].arch.hartid);
 }
 
-void arch_sched_directed_ipi(uint32_t cpu_bitmap)
+void IRAM_ATTR arch_sched_directed_ipi(uint32_t cpu_bitmap)
 {
 	unsigned int key = arch_irq_lock();
 	unsigned int id = _current_cpu->id;
@@ -54,12 +54,12 @@ void arch_sched_directed_ipi(uint32_t cpu_bitmap)
 }
 
 #ifdef CONFIG_FPU_SHARING
-void arch_flush_fpu_ipi(unsigned int cpu)
+void IRAM_ATTR arch_flush_fpu_ipi(unsigned int cpu)
 {
 	send_ipi(cpu, IPI_FPU_FLUSH);
 }
 
-void arch_spin_relax(void)
+void IRAM_ATTR arch_spin_relax(void)
 {
 	atomic_val_t *pending_ipi = &cpu_pending_ipi[_current_cpu->id];
 
