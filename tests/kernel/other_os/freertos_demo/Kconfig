@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config FREERTOS_DEMO_DURATION_S
+	int "How long to run the demo (s)"
+	default 60
+	help
+	  The FreeRTOS demo runs until stopped; the check runs every 10 s.
+
+config FREERTOS_DEMO_MODULES
+	hex "Demo modules to run (bit mask)"
+	default 0x1ff
+	help
+	  Bit 0 BlockQ, 1 semtest, 2 PollQ, 3 integer, 4 recmutex, 5 countsem,
+	  6 dynamic, 7 blocktim, 8 death.
+
+config FREERTOS_DEMO_BLOCKTIM_REFILL
+	bool "Run blocktim's make-room-and-refill steps"
+	help
+	  They rely on a FreeRTOS queue leaving an item in the queue for a
+	  higher priority task to take back; a k_msgq hands it straight to
+	  the blocked thread, so they fail on Zephyr by design.
+
+source "Kconfig.zephyr"

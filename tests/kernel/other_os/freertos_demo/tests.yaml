@@ -1,0 +1,16 @@
+common:
+  tags:
+    - kernel
+  timeout: 600
+  integration_platforms:
+    - qemu_x86_64
+    - qemu_cortex_m3
+tests:
+  kernel.freertos_demo:
+    extra_configs:
+      - CONFIG_FREERTOS_DEMO_DURATION_S=60
+  kernel.freertos_demo.smp_pinned:
+    filter: CONFIG_SMP and (CONFIG_MP_MAX_NUM_CPUS > 1)
+    extra_configs:
+      - CONFIG_FREERTOS_DEMO_DURATION_S=60
+      - CONFIG_SCHED_CPU_MASK=y
