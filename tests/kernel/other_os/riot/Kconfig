@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config RIOT_PORT_RACE_MS
+	int "Duration of thread_msg_block_race (ms)"
+	default 10000
+	help
+	  RIOT runs thread_msg_block_race until it fails; stop after this
+	  long instead.
+
+source "Kconfig.zephyr"
