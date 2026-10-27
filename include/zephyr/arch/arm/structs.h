@@ -22,6 +22,27 @@ struct _cpu_arch {
 #endif
 };
 
+#elif defined(CONFIG_CPU_CORTEX_M) && defined(CONFIG_SMP) && defined(CONFIG_USE_SWITCH)
+
+/* Pointers used by the Cortex-M interrupt-exit context switch
+ * (arch/arm/core/cortex_m/arm-m-switch.c); see struct arm_m_cs_ptrs there.
+ */
+struct arm_m_cpu_cs_ptrs {
+	void *out, *in, *lr_save, *lr_fixup;
+	void **handle_ptr, *handle;
+};
+
+/* Per CPU architecture specifics */
+struct _cpu_arch {
+	struct arm_m_cpu_cs_ptrs cs_ptrs;
+	/* Stacked EXC_RETURN at the top of this CPU's interrupt stack */
+	uint32_t *exc_lr_ptr;
+#ifdef CONFIG_THREAD_LOCAL_STORAGE
+	/* TLS pointer of the thread running here (z_arm_tls_ptr on UP) */
+	uintptr_t tls_ptr;
+#endif
+};
+
 #else
 
 /* Default definitions when no architecture specific definitions exist. */
