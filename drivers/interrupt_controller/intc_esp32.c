@@ -230,7 +230,12 @@ static bool intr_has_handler(int intr, int cpu)
 	intr += CONFIG_RISCV_RESERVED_IRQ_ISR_TABLES_OFFSET;
 #endif
 
-	return _sw_isr_table[intr * CONFIG_MP_MAX_NUM_CPUS + cpu].isr != z_irq_spurious;
+	/* The table is shared by all CPUs: a line in use on one CPU has its
+	 * handler in the same entry as that line on any other CPU.
+	 */
+	ARG_UNUSED(cpu);
+
+	return _sw_isr_table[intr].isr != z_irq_spurious;
 }
 
 static bool is_vect_desc_usable(struct vector_desc_t *vd, int flags, int cpu, int force)
