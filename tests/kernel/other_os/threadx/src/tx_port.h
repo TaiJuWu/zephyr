@@ -18,7 +18,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/ztest.h>
 
-#define TX_THREADS     3
+#define TX_THREADS     5
 #define TX_STACK_SIZE  (1024 + CONFIG_TEST_EXTRA_STACK_SIZE)
 
 extern struct k_thread tx_thread[TX_THREADS];
@@ -36,6 +36,7 @@ struct tx_thread_def {
 	k_thread_entry_t entry;
 	int prio;
 	bool auto_start;
+	void *arg;   /* passed as p1 */
 };
 
 /* Create the threads as tx_application_define() would and run the test

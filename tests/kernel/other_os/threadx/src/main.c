@@ -15,7 +15,7 @@ void tx_run_main(const struct tx_thread_def *defs, int n, int main_idx)
 
 	for (int i = 0; i < n; i++) {
 		k_thread_create(&tx_thread[i], tx_stack[i], TX_STACK_SIZE,
-				defs[i].entry, NULL, NULL, NULL, defs[i].prio, 0,
+				defs[i].entry, defs[i].arg, NULL, NULL, defs[i].prio, 0,
 				K_FOREVER);
 	}
 
