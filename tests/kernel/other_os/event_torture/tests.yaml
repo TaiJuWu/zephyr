@@ -1,0 +1,6 @@
+tests:
+  kernel.event_torture:
+    tags: kernel
+    timeout: 120
+    extra_configs:
+      - CONFIG_EVENT_TORTURE_DURATION_S=10

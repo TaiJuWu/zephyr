@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config EVENT_TORTURE_DURATION_S
+	int "How long to run (s)"
+	default 30
+
+config EVENT_TORTURE_SEED
+	hex "Random seed (0: from the cycle counter, printed)"
+	default 0x0
+
+source "Kconfig.zephyr"
