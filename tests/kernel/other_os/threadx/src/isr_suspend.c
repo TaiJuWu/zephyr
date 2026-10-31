@@ -87,7 +87,7 @@ static void isr_thread_0(void *p1, void *p2, void *p3)
 	 * one; loop until the ISR has run its sequence 40 times instead.
 	 */
 	while (event_flags_set_counter < ISR_ROUNDS) {
-		if (k_event_wait_safe(&event_flags_0, 2, false, K_TICKS(4)) == 0) {
+		if (k_event_wait_safe(&event_flags_0, 2, false, TX_TICKS(4)) == 0) {
 			TX_ERROR(8);
 			isr_enabled = false;
 			return;
@@ -100,6 +100,8 @@ static void isr_thread_0(void *p1, void *p2, void *p3)
 
 	if ((thread_0_counter != event_flags_set_counter) ||
 	    (thread_1_counter != event_flags_set_counter)) {
+		printk("thread_0_counter %lu, thread_1_counter %lu, ISR rounds %lu\n",
+		       thread_0_counter, thread_1_counter, event_flags_set_counter);
 		TX_ERROR(10);
 	}
 }
@@ -107,7 +109,7 @@ static void isr_thread_0(void *p1, void *p2, void *p3)
 static void isr_thread_1(void *p1, void *p2, void *p3)
 {
 	while (true) {
-		if (k_event_wait_safe(&event_flags_0, 1, false, K_TICKS(4)) == 0) {
+		if (k_event_wait_safe(&event_flags_0, 1, false, TX_TICKS(4)) == 0) {
 			break;
 		}
 		thread_1_counter++;
@@ -125,10 +127,13 @@ static void isr_thread_2(void *p1, void *p2, void *p3)
 
 ZTEST(threadx_port, test_event_flag_isr_set_clear)
 {
+	/* The original creates thread 2 first, so it runs (and sets 0x4,
+	 * which the ISR expects to see) before threads 0 and 1 block.
+	 */
 	static const struct tx_thread_def defs[] = {
+		{ isr_thread_2, 17, true },
 		{ isr_thread_0, 17, true },
 		{ isr_thread_1, 17, true },
-		{ isr_thread_2, 17, true },
 	};
 
 	thread_0_counter = 0;
@@ -143,7 +148,7 @@ ZTEST(threadx_port, test_event_flag_isr_set_clear)
 	k_timer_start(&timer_0, K_TICKS(1), K_TICKS(1));
 	k_timer_start(&isr_timer, K_TICKS(1), K_TICKS(1));
 
-	tx_run(defs, ARRAY_SIZE(defs));
+	tx_run_main(defs, ARRAY_SIZE(defs), 1);
 
 	k_timer_stop(&isr_timer);
 	k_timer_stop(&timer_0);

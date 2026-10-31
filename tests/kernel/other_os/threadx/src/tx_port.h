@@ -43,6 +43,17 @@ struct tx_thread_def {
  */
 void tx_run(const struct tx_thread_def *defs, int n);
 
+/* Same, for tests that do not create thread 0 first: wait for defs[main_idx] */
+void tx_run_main(const struct tx_thread_def *defs, int n, int main_idx);
+
+/* The ThreadX regression tests run at TX_TIMER_TICKS_PER_SECOND (100 by
+ * default). Timeouts that only bound how long a thread may take to get
+ * scheduled are converted at that rate, so that a faster Zephyr tick does
+ * not shorten them.
+ */
+#define TX_TICK_MS   10
+#define TX_TICKS(n)  K_MSEC((n) * TX_TICK_MS)
+
 static inline bool tx_state(struct k_thread *t, uint8_t flag)
 {
 	return (t->base.thread_state & flag) != 0U;

@@ -8,7 +8,7 @@ struct k_thread tx_thread[TX_THREADS];
 static K_THREAD_STACK_ARRAY_DEFINE(tx_stack, TX_THREADS, TX_STACK_SIZE);
 volatile int tx_error;
 
-void tx_run(const struct tx_thread_def *defs, int n)
+void tx_run_main(const struct tx_thread_def *defs, int n, int main_idx)
 {
 	__ASSERT_NO_MSG(n <= TX_THREADS);
 	tx_error = 0;
@@ -30,7 +30,7 @@ void tx_run(const struct tx_thread_def *defs, int n)
 	}
 	k_sched_unlock();
 
-	int ret = k_thread_join(&tx_thread[0], K_SECONDS(30));
+	int ret = k_thread_join(&tx_thread[main_idx], K_SECONDS(30));
 
 	for (int i = 0; i < n; i++) {
 		k_thread_abort(&tx_thread[i]);
@@ -38,6 +38,11 @@ void tx_run(const struct tx_thread_def *defs, int n)
 
 	zassert_equal(ret, 0, "thread 0 did not finish");
 	zassert_equal(tx_error, 0, "ThreadX ERROR #%d", tx_error);
+}
+
+void tx_run(const struct tx_thread_def *defs, int n)
+{
+	tx_run_main(defs, n, 0);
 }
 
 ZTEST_SUITE(threadx_port, NULL, NULL, ztest_simple_1cpu_before,
