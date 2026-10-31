@@ -8,10 +8,10 @@ config FREERTOS_DEMO_DURATION_S
 
 config FREERTOS_DEMO_MODULES
 	hex "Demo modules to run (bit mask)"
-	default 0x1ff
+	default 0x3ff
 	help
 	  Bit 0 BlockQ, 1 semtest, 2 PollQ, 3 integer, 4 recmutex, 5 countsem,
-	  6 dynamic, 7 blocktim, 8 death.
+	  6 dynamic, 7 blocktim, 8 death, 9 EventGroups.
 
 config FREERTOS_DEMO_BLOCKTIM_REFILL
 	bool "Run blocktim's make-room-and-refill steps"

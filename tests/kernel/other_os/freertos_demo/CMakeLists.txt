@@ -4,4 +4,5 @@ cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(freertos_demo)
 
-target_sources(app PRIVATE src/main.c src/queues.c src/sync.c src/tasks.c)
+target_sources(app PRIVATE src/main.c src/queues.c src/sync.c src/tasks.c
+			    src/events.c)

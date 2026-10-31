@@ -42,7 +42,7 @@ struct check {
 };
 
 enum { M_BLOCKQ, M_SEMTEST, M_POLLQ, M_INTEGER, M_RECMUTEX, M_COUNTSEM, M_DYNAMIC,
-       M_BLOCKTIM, M_DEATH };
+       M_BLOCKTIM, M_DEATH, M_EVENTS };
 
 #define ON(m) ((CONFIG_FREERTOS_DEMO_MODULES & BIT(m)) != 0)
 
@@ -58,6 +58,7 @@ static const struct check checks[] = {
 	  M_COUNTSEM },
 	{ "xAreDynamicPriorityTasksStillRunning", xAreDynamicPriorityTasksStillRunning,
 	  M_DYNAMIC },
+	{ "xAreEventGroupTasksStillRunning", xAreEventGroupTasksStillRunning, M_EVENTS },
 };
 
 ZTEST(freertos_demo, test_full_demo)
@@ -92,6 +93,9 @@ ZTEST(freertos_demo, test_full_demo)
 	}
 	if (ON(M_BLOCKTIM)) {
 		vCreateBlockTimeTasks();
+	}
+	if (ON(M_EVENTS)) {
+		vStartEventGroupTasks();
 	}
 	/* Last, so the task count it records at start includes the others. */
 	if (ON(M_DEATH)) {

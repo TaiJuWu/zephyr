@@ -75,5 +75,7 @@ void vStartDynamicPriorityTasks(void);
 bool xAreDynamicPriorityTasksStillRunning(void);
 void vCreateBlockTimeTasks(void);
 bool xAreBlockTimeTestTasksStillRunning(void);
+void vStartEventGroupTasks(void);
+bool xAreEventGroupTasksStillRunning(void);
 
 #endif /* DEMO_H_ */
