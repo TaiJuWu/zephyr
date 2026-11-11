@@ -422,6 +422,7 @@ static k_spinlock_key_t timeout_wheel_announce_now(k_spinlock_key_t key)
 
 		inflight_timeout = t;
 		k_spin_unlock(&timeout_lock, key);
+		Z_INJECT(TIMEOUT_INFLIGHT, t);
 		t->fn(t);
 		key = k_spin_lock(&timeout_lock);
 		inflight_timeout = NULL;

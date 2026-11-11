@@ -9,6 +9,7 @@
 #include <zephyr/spinlock.h>
 #include <ksched.h>
 #include <timeout_q.h>
+#include <kinject.h>
 #include <zephyr/internal/syscall_handler.h>
 #include <zephyr/drivers/timer/system_timer.h>
 #include <zephyr/sys/clock.h>
@@ -402,6 +403,7 @@ void sys_clock_announce_locked(uint32_t ticks, k_spinlock_key_t key)
 			inflight_timeout = t;
 
 			k_spin_unlock(&timeout_lock, key);
+			Z_INJECT(TIMEOUT_INFLIGHT, t);
 			handler(t);
 			key = k_spin_lock(&timeout_lock);
 			inflight_timeout = NULL;
