@@ -8,6 +8,7 @@
 #include <kswap.h>
 #include <ksched.h>
 #include <ipi.h>
+#include <kinject.h>
 
 #if defined(CONFIG_IPI_OPTIMIZE_IDLE) && defined(CONFIG_PM)
 #include <zephyr/pm/pm.h>
@@ -343,6 +344,8 @@ void z_sched_ipi(void)
 	/* NOTE: When adding code to this, make sure this is called
 	 * at appropriate location when !CONFIG_SCHED_IPI_SUPPORTED.
 	 */
+	Z_INJECT(SCHED_IPI, NULL);
+
 #ifdef CONFIG_TRACE_SCHED_IPI
 	z_trace_sched_ipi();
 #endif /* CONFIG_TRACE_SCHED_IPI */

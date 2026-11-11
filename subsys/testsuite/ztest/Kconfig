@@ -238,6 +238,25 @@ config ZTEST_PARAMETER_COUNT
 	help
 	  Maximum amount of concurrent return values / expected parameters.
 
+config ZTEST_INJECT
+	bool "Injection points in kernel code"
+	depends on !ZTEST_UNITTEST
+	help
+	  Compile the injection points marked in kernel code with Z_INJECT(),
+	  so that a test can attach handlers to them through
+	  <zephyr/ztest_inject.h>: hold the CPU that reaches a point, or run a
+	  function in interrupt context on the other CPUs from there. Lets a
+	  test enter race windows on purpose. For tests only.
+
+config ZTEST_INJECT_SPIN_TIMEOUT_MS
+	int "Longest time a CPU spins at an injection point"
+	depends on ZTEST_INJECT
+	default 2000
+	help
+	  Upper bound for a CPU held at an injection point, or waiting there
+	  for the other CPUs, so that a test that never releases it fails
+	  instead of hanging the system.
+
 config ZTRESS
 	bool "Stress test framework"
 	select THREAD_RUNTIME_STATS

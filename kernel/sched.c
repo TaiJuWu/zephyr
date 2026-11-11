@@ -26,6 +26,7 @@
 #include <metairq.h>
 #include <run_q.h>
 #include <timeslicing.h>
+#include <kinject.h>
 
 LOG_MODULE_DECLARE(os, CONFIG_KERNEL_LOG_LEVEL);
 
@@ -595,6 +596,7 @@ static void halt_thread(struct k_thread *thread, uint8_t new_state, k_spinlock_k
 				 * to finish the halt.
 				 */
 				thread->base.thread_state |= _THREAD_ABORTING;
+				Z_INJECT(HALT_WAIT, thread);
 				do {
 					z_sched_spinlock_release();
 					(void)z_sched_spinlock_lock();

@@ -27,6 +27,7 @@ zephyr_library_sources(
 )
 zephyr_library_sources_ifdef(CONFIG_ZTEST_MOCKING  src/ztest_mock.c)
 zephyr_library_sources_ifdef(CONFIG_ZTRESS         src/ztress.c)
+zephyr_library_sources_ifdef(CONFIG_ZTEST_INJECT   src/ztest_inject.c)
 
 
 if(CONFIG_ARCH_POSIX)
