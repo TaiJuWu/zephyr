@@ -1,0 +1,12 @@
+common:
+  tags:
+    - test_framework
+    - kernel
+    - smp
+  integration_platforms:
+    - qemu_x86_64
+tests:
+  testing.ztest.inject: {}
+  testing.ztest.inject.timeout_wheel:
+    extra_configs:
+      - CONFIG_TIMEOUT_BACKEND_WHEEL=y
