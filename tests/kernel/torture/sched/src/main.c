@@ -98,6 +98,16 @@ static uint32_t cyc_to_us(uint32_t c)
 	return (uint32_t)((uint64_t)c * 1000000U / sys_clock_hw_cycles_per_sec());
 }
 
+/* CPU the caller runs on; local interrupts are masked so it cannot migrate meanwhile */
+static int cur_cpu(void)
+{
+	unsigned int key = arch_irq_lock();
+	int cpu = _current_cpu->id;
+
+	arch_irq_unlock(key);
+	return cpu;
+}
+
 static int ncpus(void)
 {
 	return (int)arch_num_cpus();
@@ -364,7 +374,7 @@ static void sb_message(void *a, void *b, void *c)
 	while (!stop) {
 		unsigned int key = arch_irq_lock();
 		uint32_t now = k_cycle_get_32();
-		int cpu = arch_curr_cpu()->id;
+		int cpu = cur_cpu();
 
 		arch_irq_unlock(key);
 		for (int w = first; w < first + sb_workers; w++) {
@@ -395,7 +405,7 @@ static void sb_worker(void *a, void *b, void *c)
 
 		unsigned int key = arch_irq_lock();
 		uint32_t us = cyc_to_us(k_cycle_get_32() - sb_stamp[id]);
-		bool local = arch_curr_cpu()->id == (uint32_t)sb_cpu[id];
+		bool local = cur_cpu() == (uint32_t)sb_cpu[id];
 
 		arch_irq_unlock(key);
 		lat_add(local ? &sb_local[id] : &sb_remote[id], us);
@@ -985,7 +995,7 @@ static void mg_worker(void *a, void *b, void *c)
 		unsigned int key = arch_irq_lock();
 		uint32_t g = mg_gen[id];
 		int e = mg_expect[id];
-		int cpu = arch_curr_cpu()->id;
+		int cpu = cur_cpu();
 
 		arch_irq_unlock(key);
 		if (e >= 0 && g == mg_gen[id] && cpu != e) {
