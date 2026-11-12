@@ -89,3 +89,17 @@ config SCHED_TORTURE_RANDOM_PARAMS
 
 config SCHED_TORTURE_PI_UNIPROCESSOR
 	bool "pi_stress --uniprocessor: run every group on CPU 0"
+
+config SCHED_TORTURE_HANG_DUMP
+	bool "Dump every thread when a scenario runs far longer than expected"
+	help
+	  Not part of any Linux tool. A cooperative thread checks every
+	  second how long the current scenario has been running; past
+	  SCHED_TORTURE_HANG_DUMP_S it prints each CPU's current thread and,
+	  for every thread, its state, priority, wait queue, remaining
+	  timeout and CPU, once per scenario. For boards without a debugger.
+
+config SCHED_TORTURE_HANG_DUMP_S
+	int "Scenario run time in seconds after which threads are dumped"
+	default 180
+	depends on SCHED_TORTURE_HANG_DUMP

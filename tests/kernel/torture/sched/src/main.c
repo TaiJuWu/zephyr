@@ -245,9 +245,67 @@ static void stop_and_join(int n)
 	k_thread_join(&mon_thread, K_FOREVER);
 }
 
+#ifdef CONFIG_SCHED_TORTURE_HANG_DUMP
+/* ---- hang dump: thread states over the console, for boards without a debugger ---- */
+static volatile int64_t scenario_start_ms;
+static K_THREAD_STACK_DEFINE(dump_stack, 2048);
+static struct k_thread dump_thread;
+
+static void dump_one(const struct k_thread *t, void *user_data)
+{
+	struct k_thread *th = (struct k_thread *)t;
+	const char *name = k_thread_name_get(th);
+	char state[32];
+	const char *st;
+	int cpu = 0;
+
+#ifdef CONFIG_SMP
+	cpu = th->base.cpu;
+#endif
+	st = k_thread_state_str(th, state, sizeof(state));
+	printk("ST dump: %p %-20s %-24s prio %d pended_on %p timeout %lld cpu %d\n", th,
+	       (name != NULL) ? name : "-", (st[0] != '\0') ? st : "ready",
+	       k_thread_priority_get(th), (void *)th->base.pended_on,
+	       (long long)k_thread_timeout_remaining_ticks(th), cpu);
+}
+
+static void dump_fn(void *a, void *b, void *c)
+{
+	int64_t dumped_for = -1;
+
+	for (;;) {
+		k_msleep(1000);
+
+		int64_t start = scenario_start_ms;
+		int64_t ran = k_uptime_get() - start;
+
+		if ((start == dumped_for) || (ran < CONFIG_SCHED_TORTURE_HANG_DUMP_S * 1000LL)) {
+			continue;
+		}
+		dumped_for = start;
+		printk("ST dump: scenario running for %lld ms\n", ran);
+		for (int i = 0; i < CONFIG_MP_MAX_NUM_CPUS; i++) {
+			printk("ST dump: cpu %d current %p\n", i, (void *)_kernel.cpus[i].current);
+		}
+		k_thread_foreach_unlocked(dump_one, NULL);
+	}
+}
+#endif
+
 static void before(void *f)
 {
 	stop = false;
+#ifdef CONFIG_SCHED_TORTURE_HANG_DUMP
+	static bool dump_started;
+
+	scenario_start_ms = k_uptime_get();
+	if (!dump_started) {
+		dump_started = true;
+		k_thread_create(&dump_thread, dump_stack, K_THREAD_STACK_SIZEOF(dump_stack),
+				dump_fn, NULL, NULL, NULL, K_PRIO_COOP(0), 0, K_NO_WAIT);
+		k_thread_name_set(&dump_thread, "st_dump");
+	}
+#endif
 }
 
 /* Optional background CPU hog at the lowest preemptible priority. */
