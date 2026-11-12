@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+
+mainmenu "Memory allocator torture tests"
+
+source "Kconfig.zephyr"
+
+config MEM_TORTURE_DURATION_MS
+	int "Run time of each scenario in milliseconds"
+	default 10000
+
+config MEM_TORTURE_MAX_THREADS
+	int "Upper bound on test threads; scenarios scale with the CPU count up to it"
+	default 16
+
+config MEM_TORTURE_HEAP_SIZE
+	int "Size of the k_heap under test"
+	default 16384
+
+config MEM_TORTURE_SEED
+	hex "Seed for every thread's random numbers (0: a new one each boot)"
+	default 0x0
+	help
+	  The seed in use is printed at start; set it here to replay a run.
+	  On SMP the interleaving still differs between runs.
+
+config MEM_TORTURE_STALL_MS
+	int "No progress for this long counts as a stall"
+	default 2000

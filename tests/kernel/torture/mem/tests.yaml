@@ -1,0 +1,10 @@
+common:
+  tags:
+    - kernel
+  timeout: 600
+tests:
+  kernel.mem_torture:
+    integration_platforms:
+      - qemu_x86_64
+    extra_configs:
+      - CONFIG_MEM_TORTURE_DURATION_MS=3000
