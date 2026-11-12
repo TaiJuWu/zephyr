@@ -1,0 +1,91 @@
+# Copyright (c) 2026 TaiJu Wu
+# SPDX-License-Identifier: Apache-2.0
+
+mainmenu "Scheduler torture tests"
+
+source "Kconfig.zephyr"
+
+config SCHED_TORTURE_DURATION_MS
+	int "Run time of each timed scenario in milliseconds"
+	default 10000
+
+config SCHED_TORTURE_MAX_THREADS
+	int "Upper bound on test threads; scenarios scale with the CPU count up to it"
+	default 20
+
+config SCHED_TORTURE_ONLY
+	int "Run only this scenario (0: all)"
+	default 0
+
+config SCHED_TORTURE_STALL_MS
+	int "No progress for this long counts as a stall"
+	default 2000
+
+config SCHED_TORTURE_HACKBENCH_GROUPS
+	int "hackbench -g: groups (capped by MAX_THREADS)"
+	default 10
+
+config SCHED_TORTURE_HACKBENCH_FDS
+	int "hackbench -f: senders and receivers per group"
+	default 2
+	help
+	  hackbench uses 20; it is scaled down to fit RAM.
+
+config SCHED_TORTURE_HACKBENCH_LOOPS
+	int "hackbench -l: messages per sender and receiver pair"
+	default 100
+
+config SCHED_TORTURE_SCHBENCH_MESSAGE_THREADS
+	int "schbench -m: message threads"
+	default 1
+
+config SCHED_TORTURE_SCHBENCH_CPUTIME_US
+	int "schbench -c: worker run time per wakeup in microseconds"
+	default 10000
+
+config SCHED_TORTURE_SCHBENCH_SLEEP_US
+	int "schbench -s: message thread sleep between rounds in microseconds"
+	default 10000
+
+config SCHED_TORTURE_SCHBENCH_HOGS
+	bool "Add one CPU hog per CPU (not part of schbench)"
+
+config SCHED_TORTURE_CYCLICTEST_INTERVAL_US
+	int "cyclictest -i: base interval in microseconds"
+	default 1000
+
+config SCHED_TORTURE_CYCLICTEST_DISTANCE_US
+	int "cyclictest -d: interval increment per thread in microseconds"
+	default 500
+
+config SCHED_TORTURE_CYCLICTEST_LOAD
+	bool "Run message churn and CPU hogs beside cyclictest (not part of cyclictest)"
+
+config SCHED_TORTURE_LT_LONG_HOLD_MS
+	int "locktorture long_hold: rare long spinlock hold in milliseconds"
+	default 100
+
+config SCHED_TORTURE_LT_STUTTER_MS
+	int "locktorture stutter: run and pause period in milliseconds (0: off)"
+	default 5000
+
+config SCHED_TORTURE_LT_SHUFFLE_MS
+	int "locktorture shuffle_interval in milliseconds (0: off)"
+	default 3000
+
+config SCHED_TORTURE_SEED
+	hex "Seed for every thread's random numbers (0: a new one each boot)"
+	default 0x0
+	help
+	  The seed in use is printed at start; set it here to replay a run.
+	  On SMP the interleaving still differs between runs.
+
+config SCHED_TORTURE_RANDOM_PARAMS
+	bool "Pick locktorture long_hold, stutter and shuffle at random (FreeBSD stress2 style)"
+	help
+	  Not part of locktorture, which uses fixed module parameters. Each
+	  value is drawn from the seed, between 0 (off) and twice its
+	  setting, and printed at start.
+
+config SCHED_TORTURE_PI_UNIPROCESSOR
+	bool "pi_stress --uniprocessor: run every group on CPU 0"

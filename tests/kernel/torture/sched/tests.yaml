@@ -1,0 +1,27 @@
+common:
+  tags:
+    - kernel
+  timeout: 900
+  integration_platforms:
+    - qemu_x86_64
+tests:
+  kernel.sched_torture:
+    extra_configs:
+      - CONFIG_SCHED_TORTURE_DURATION_MS=3000
+  kernel.sched_torture.smp_cpu_mask:
+    filter: CONFIG_SMP and (CONFIG_MP_MAX_NUM_CPUS > 1)
+    extra_configs:
+      - CONFIG_SCHED_TORTURE_DURATION_MS=3000
+      - CONFIG_SCHED_CPU_MASK=y
+  kernel.sched_torture.loaded:
+    extra_configs:
+      - CONFIG_SCHED_TORTURE_DURATION_MS=3000
+      - CONFIG_SCHED_TORTURE_SCHBENCH_HOGS=y
+      - CONFIG_SCHED_TORTURE_CYCLICTEST_LOAD=y
+  kernel.sched_torture.pi_uniprocessor:
+    filter: CONFIG_SMP and (CONFIG_MP_MAX_NUM_CPUS > 1)
+    extra_configs:
+      - CONFIG_SCHED_TORTURE_DURATION_MS=3000
+      - CONFIG_SCHED_CPU_MASK=y
+      - CONFIG_SCHED_TORTURE_PI_UNIPROCESSOR=y
+      - CONFIG_SCHED_TORTURE_ONLY=5
