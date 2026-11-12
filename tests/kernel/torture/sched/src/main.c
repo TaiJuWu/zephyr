@@ -1277,4 +1277,445 @@ ZTEST(sched_torture, test_10_mixed_ops)
 	zassert_equal(mx_sl_count, (uint32_t)atomic_get(&mx_sl_ops), "spinlock lost updates");
 }
 
+/* ---------------------------------------------------------------------------
+ * 11. condition variables (no Linux counterpart): producers and consumers
+ * share a bounded ring under a k_mutex, wait on "not full" / "not empty"
+ * k_condvars with a timeout, and wake each other with signal or broadcast.
+ * The ring must never overflow or underflow, every item is consumed once,
+ * and the items of one producer come out in order.
+ */
+#define CV_SLOTS 4
+
+static struct k_mutex cv_mtx;
+static struct k_condvar cv_not_full, cv_not_empty;
+static uint32_t cv_ring[CV_SLOTS];
+static int cv_head, cv_count;
+static atomic_t cv_viol;
+static uint32_t cv_made[NTHREADS], cv_used[NTHREADS];
+static uint32_t cv_last[NTHREADS][NTHREADS]; /* [consumer][producer] last seq + 1 */
+
+static void cv_wake(struct k_condvar *cv, uint32_t *s)
+{
+	if (rnd(s) % 4 == 0) {
+		k_condvar_broadcast(cv);
+	} else {
+		k_condvar_signal(cv);
+	}
+}
+
+static void cv_producer(void *a, void *b, void *c)
+{
+	int id = (int)(uintptr_t)a;
+	uint32_t s = seed_mix(0x51ed270bu * (id + 1));
+	uint32_t seq = 0;
+
+	while (!stop) {
+		k_mutex_lock(&cv_mtx, K_FOREVER);
+		while (cv_count == CV_SLOTS && !stop) {
+			(void)k_condvar_wait(&cv_not_full, &cv_mtx, K_MSEC(5));
+		}
+		if (cv_count < CV_SLOTS) {
+			cv_ring[(cv_head + cv_count) % CV_SLOTS] =
+				((uint32_t)id << 24) | (seq++ & 0xffffff);
+			cv_count++;
+			cv_made[id]++;
+			cv_wake(&cv_not_empty, &s);
+		} else if (cv_count > CV_SLOTS) {
+			atomic_inc(&cv_viol);
+		}
+		k_mutex_unlock(&cv_mtx);
+		progress[id]++;
+	}
+}
+
+static void cv_consumer(void *a, void *b, void *c)
+{
+	int id = (int)(uintptr_t)a;
+	uint32_t s = seed_mix(0x2c1b3c6du * (id + 1));
+
+	while (!stop) {
+		k_mutex_lock(&cv_mtx, K_FOREVER);
+		while (cv_count == 0 && !stop) {
+			(void)k_condvar_wait(&cv_not_empty, &cv_mtx, K_MSEC(5));
+		}
+		if (cv_count > 0) {
+			uint32_t v = cv_ring[cv_head];
+			int p = v >> 24;
+
+			cv_head = (cv_head + 1) % CV_SLOTS;
+			cv_count--;
+			if ((p >= NTHREADS) || ((v & 0xffffff) + 1 <= cv_last[id][p])) {
+				atomic_inc(&cv_viol); /* unknown producer, or out of order */
+			} else {
+				cv_last[id][p] = (v & 0xffffff) + 1;
+			}
+			cv_used[id]++;
+			cv_wake(&cv_not_full, &s);
+		} else if (cv_count < 0) {
+			atomic_inc(&cv_viol);
+		}
+		k_mutex_unlock(&cv_mtx);
+		progress[id]++;
+	}
+}
+
+ZTEST(sched_torture, test_11_condvar)
+{
+	ONLY(11);
+	int np = MIN(ncpus() + 1, NTHREADS / 2), n = 2 * np;
+	uint32_t made = 0, used = 0;
+
+	k_mutex_init(&cv_mtx);
+	k_condvar_init(&cv_not_full);
+	k_condvar_init(&cv_not_empty);
+	cv_head = cv_count = 0;
+	atomic_clear(&cv_viol);
+	memset(cv_made, 0, sizeof(cv_made));
+	memset(cv_used, 0, sizeof(cv_used));
+	memset(cv_last, 0, sizeof(cv_last));
+	monitor_start(n);
+	for (int i = 0; i < np; i++) {
+		spawn(i, cv_producer, K_PRIO_PREEMPT(6), -1);
+		spawn(np + i, cv_consumer, K_PRIO_PREEMPT(6), -1);
+	}
+	k_msleep(DUR_MS);
+	stop_and_join(n);
+	for (int i = 0; i < n; i++) {
+		made += cv_made[i];
+		used += cv_used[i];
+	}
+	printk("ST condvar: %d producers, %d consumers, %u made, %u used, %d left, violations %ld, "
+	       "stalls %u\n", np, np, made, used, cv_count, (long)atomic_get(&cv_viol), stalls);
+	zassert_true(used > 0);
+	zassert_equal(atomic_get(&cv_viol), 0, "ring overflowed, underflowed or reordered");
+	zassert_equal(made, used + (uint32_t)cv_count, "items lost or duplicated");
+	zassert_equal(stalls, 0, "a thread stopped making progress");
+}
+
+/* ---------------------------------------------------------------------------
+ * 12. fifo and lifo (no Linux counterpart): a fixed set of items moves
+ * between a free k_fifo and a work k_fifo and k_lifo, taken and put by
+ * threads with timeouts and by a timer ISR without waiting; waits are
+ * cancelled now and then. Every item is in exactly one queue or in one
+ * thread's hands, which a per-item flag checks on every move.
+ */
+#define FL_ITEMS 32
+
+struct fl_item {
+	void *fifo_reserved;
+	atomic_t queued;
+};
+
+static struct fl_item fl_items[FL_ITEMS];
+static struct k_fifo fl_free, fl_work;
+static struct k_lifo fl_wlifo;
+static atomic_t fl_viol, fl_moves, fl_isr_moves, fl_cancels;
+
+static void fl_put(void *q, bool lifo, struct fl_item *it)
+{
+	if (!atomic_cas(&it->queued, 0, 1)) {
+		atomic_inc(&fl_viol);
+	}
+	if (lifo) {
+		k_lifo_put((struct k_lifo *)q, it);
+	} else {
+		k_fifo_put((struct k_fifo *)q, it);
+	}
+}
+
+static struct fl_item *fl_got(struct fl_item *it)
+{
+	if ((it != NULL) && !atomic_cas(&it->queued, 1, 0)) {
+		atomic_inc(&fl_viol); /* handed out twice */
+	}
+	return it;
+}
+
+static void fl_isr(struct k_timer *t)
+{
+	struct fl_item *it = fl_got(k_fifo_get(&fl_free, K_NO_WAIT));
+
+	if (it != NULL) {
+		fl_put(&fl_wlifo, true, it);
+		atomic_inc(&fl_isr_moves);
+	}
+	it = fl_got(k_fifo_get(&fl_work, K_NO_WAIT));
+	if (it != NULL) {
+		fl_put(&fl_free, false, it);
+		atomic_inc(&fl_isr_moves);
+	}
+}
+K_TIMER_DEFINE(fl_timer, fl_isr, NULL);
+
+static void fl_worker(void *a, void *b, void *c)
+{
+	int id = (int)(uintptr_t)a;
+	uint32_t s = seed_mix(0x6a09e667u * (id + 1));
+
+	while (!stop) {
+		uint32_t op = rnd(&s) % 100;
+		struct fl_item *it;
+
+		if (op < 40) {
+			it = fl_got(k_fifo_get(&fl_free, K_MSEC(5)));
+			if (it != NULL) {
+				k_busy_wait(rnd(&s) % 20);
+				if (rnd(&s) % 2) {
+					fl_put(&fl_work, false, it);
+				} else {
+					fl_put(&fl_wlifo, true, it);
+				}
+			}
+		} else if (op < 70) {
+			it = fl_got(k_fifo_get(&fl_work, K_MSEC(5)));
+			if (it != NULL) {
+				fl_put(&fl_free, false, it);
+			}
+		} else if (op < 95) {
+			it = fl_got(k_lifo_get(&fl_wlifo, K_MSEC(5)));
+			if (it != NULL) {
+				fl_put(&fl_free, false, it);
+			}
+		} else if (op < 97) {
+			(void)k_queue_peek_head(&fl_work._queue);
+			(void)k_queue_peek_tail(&fl_work._queue);
+		} else {
+			k_fifo_cancel_wait(&fl_work);
+			atomic_inc(&fl_cancels);
+		}
+		atomic_inc(&fl_moves);
+		progress[id]++;
+	}
+}
+
+static int fl_drain(void *q, bool lifo, uint8_t *seen)
+{
+	int n = 0;
+	struct fl_item *it;
+
+	while ((it = lifo ? k_lifo_get((struct k_lifo *)q, K_NO_WAIT)
+			  : k_fifo_get((struct k_fifo *)q, K_NO_WAIT)) != NULL) {
+		int i = it - fl_items;
+
+		if ((i < 0) || (i >= FL_ITEMS) || seen[i]++) {
+			atomic_inc(&fl_viol);
+		}
+		n++;
+	}
+	return n;
+}
+
+ZTEST(sched_torture, test_12_fifo_lifo)
+{
+	ONLY(12);
+	int nw = MIN(2 * ncpus() + 2, NTHREADS);
+	uint8_t seen[FL_ITEMS] = {0};
+	int left;
+
+	k_fifo_init(&fl_free);
+	k_fifo_init(&fl_work);
+	k_lifo_init(&fl_wlifo);
+	atomic_clear(&fl_viol);
+	atomic_clear(&fl_moves);
+	atomic_clear(&fl_isr_moves);
+	atomic_clear(&fl_cancels);
+	for (int i = 0; i < FL_ITEMS; i++) {
+		atomic_clear(&fl_items[i].queued);
+		fl_put(&fl_free, false, &fl_items[i]);
+	}
+	monitor_start(nw);
+	k_timer_start(&fl_timer, K_MSEC(1), K_MSEC(1));
+	for (int i = 0; i < nw; i++) {
+		spawn(i, fl_worker, K_PRIO_PREEMPT(6), -1);
+	}
+	k_msleep(DUR_MS);
+	stop_and_join(nw);
+	k_timer_stop(&fl_timer);
+	left = fl_drain(&fl_free, false, seen) + fl_drain(&fl_work, false, seen) +
+	       fl_drain(&fl_wlifo, true, seen);
+	printk("ST fifo/lifo: %d workers, %ld moves, %ld from ISR, %ld cancels, %d of %d items "
+	       "back, violations %ld, stalls %u\n", nw, (long)atomic_get(&fl_moves),
+	       (long)atomic_get(&fl_isr_moves), (long)atomic_get(&fl_cancels), left, FL_ITEMS,
+	       (long)atomic_get(&fl_viol), stalls);
+	zassert_equal(atomic_get(&fl_viol), 0, "an item was handed out twice");
+	zassert_equal(left, FL_ITEMS, "items lost");
+	zassert_equal(stalls, 0, "a thread stopped making progress");
+}
+
+/* ---------------------------------------------------------------------------
+ * 13. work queues (no Linux counterpart): threads and a timer ISR submit,
+ * reschedule and cancel work items and delayable work items on the system
+ * work queue and a second queue; threads also flush and cancel
+ * synchronously. A work item must never run twice at once, must not run
+ * more often than it was queued, and every item is idle at the end.
+ */
+#define WQ_ITEMS 8
+#define WQ_DITEMS 4
+
+struct wq_item {
+	struct k_work w;            /* items 0..WQ_ITEMS-1 */
+	struct k_work_delayable dw; /* the WQ_DITEMS after them */
+	atomic_t running, runs, queued;
+};
+
+static struct wq_item wq_items[WQ_ITEMS + WQ_DITEMS];
+static struct k_work_q wq_q2;
+static K_THREAD_STACK_DEFINE(wq_q2_stack, 1536);
+static atomic_t wq_viol, wq_ops;
+
+static void wq_run(struct wq_item *it)
+{
+	if (atomic_inc(&it->running) != 0) {
+		atomic_inc(&wq_viol); /* running twice at once */
+	}
+	k_busy_wait(10);
+	atomic_inc(&it->runs);
+	atomic_dec(&it->running);
+}
+
+static void wq_handler(struct k_work *w)
+{
+	wq_run(CONTAINER_OF(w, struct wq_item, w));
+}
+
+static void wq_dhandler(struct k_work *w)
+{
+	wq_run(CONTAINER_OF(k_work_delayable_from_work(w), struct wq_item, dw));
+}
+
+static struct k_work_q *wq_pick(uint32_t r)
+{
+	return (r & 1) ? &k_sys_work_q : &wq_q2;
+}
+
+/* One random operation; threads may also block (flush, cancel_sync). */
+static void wq_op(uint32_t *s, bool may_block)
+{
+	uint32_t r = rnd(s);
+	int i = r % (WQ_ITEMS + WQ_DITEMS);
+	struct wq_item *it = &wq_items[i];
+	uint32_t op = (r >> 8) % 100;
+	int ret;
+
+	if (i < WQ_ITEMS) {
+		struct k_work *w = &it->w;
+
+		if (op < 60) {
+			ret = k_work_submit_to_queue(wq_pick(r >> 16), w);
+			if (ret > 0) {
+				atomic_inc(&it->queued);
+			}
+		} else if (op < 80 || !may_block) {
+			(void)k_work_cancel(w);
+		} else if (op < 90) {
+			struct k_work_sync sync;
+
+			(void)k_work_cancel_sync(w, &sync);
+		} else {
+			struct k_work_sync sync;
+
+			(void)k_work_flush(w, &sync);
+		}
+	} else {
+		k_timeout_t d = K_TICKS((r >> 16) % 4);
+
+		if (op < 40) {
+			ret = k_work_schedule_for_queue(wq_pick(r >> 20), &it->dw, d);
+			if (ret > 0) {
+				atomic_inc(&it->queued);
+			}
+		} else if (op < 70) {
+			ret = k_work_reschedule_for_queue(wq_pick(r >> 20), &it->dw, d);
+			if (ret > 0) {
+				atomic_inc(&it->queued);
+			}
+		} else if (op < 90 || !may_block) {
+			(void)k_work_cancel_delayable(&it->dw);
+		} else {
+			struct k_work_sync sync;
+
+			(void)k_work_cancel_delayable_sync(&it->dw, &sync);
+		}
+	}
+	atomic_inc(&wq_ops);
+}
+
+static void wq_isr(struct k_timer *t)
+{
+	static uint32_t s = 0x1f83d9abu;
+
+	wq_op(&s, false);
+}
+K_TIMER_DEFINE(wq_timer, wq_isr, NULL);
+
+static void wq_worker(void *a, void *b, void *c)
+{
+	int id = (int)(uintptr_t)a;
+	uint32_t s = seed_mix(0x5be0cd19u * (id + 1));
+
+	while (!stop) {
+		wq_op(&s, true);
+		if (rnd(&s) % 8 == 0) {
+			k_sleep(K_TICKS(1));
+		}
+		progress[id]++;
+	}
+}
+
+ZTEST(sched_torture, test_13_workqueue)
+{
+	ONLY(13);
+	static bool q2_started;
+	int nw = MIN(ncpus() + 1, NTHREADS);
+	uint32_t runs = 0, queued = 0;
+	int busy = 0;
+
+	if (!q2_started) {
+		q2_started = true;
+		k_work_queue_init(&wq_q2);
+		k_work_queue_start(&wq_q2, wq_q2_stack, K_THREAD_STACK_SIZEOF(wq_q2_stack),
+				   K_PRIO_PREEMPT(4), NULL);
+	}
+	for (int i = 0; i < WQ_ITEMS + WQ_DITEMS; i++) {
+		k_work_init(&wq_items[i].w, wq_handler);
+		k_work_init_delayable(&wq_items[i].dw, wq_dhandler);
+		atomic_clear(&wq_items[i].running);
+		atomic_clear(&wq_items[i].runs);
+		atomic_clear(&wq_items[i].queued);
+	}
+	atomic_clear(&wq_viol);
+	atomic_clear(&wq_ops);
+	monitor_start(nw);
+	k_timer_start(&wq_timer, K_MSEC(1), K_MSEC(1));
+	for (int i = 0; i < nw; i++) {
+		spawn(i, wq_worker, K_PRIO_PREEMPT(6), -1);
+	}
+	k_msleep(DUR_MS);
+	stop_and_join(nw);
+	k_timer_stop(&wq_timer);
+	for (int i = 0; i < WQ_ITEMS + WQ_DITEMS; i++) {
+		struct k_work_sync sync;
+
+		if (i < WQ_ITEMS) {
+			(void)k_work_cancel_sync(&wq_items[i].w, &sync);
+			busy += (k_work_busy_get(&wq_items[i].w) != 0) ? 1 : 0;
+		} else {
+			(void)k_work_cancel_delayable_sync(&wq_items[i].dw, &sync);
+			busy += (k_work_delayable_busy_get(&wq_items[i].dw) != 0) ? 1 : 0;
+		}
+		runs += atomic_get(&wq_items[i].runs);
+		queued += atomic_get(&wq_items[i].queued);
+		if (atomic_get(&wq_items[i].runs) > atomic_get(&wq_items[i].queued)) {
+			atomic_inc(&wq_viol); /* ran more often than queued */
+		}
+	}
+	printk("ST workqueue: %d submitters + ISR, %ld ops, %u queued, %u runs, %d busy at end, "
+	       "violations %ld, stalls %u\n", nw, (long)atomic_get(&wq_ops), queued, runs, busy,
+	       (long)atomic_get(&wq_viol), stalls);
+	zassert_true(runs > 0);
+	zassert_equal(atomic_get(&wq_viol), 0, "a work item ran concurrently or too often");
+	zassert_equal(busy, 0, "a work item was still busy after cancel_sync");
+	zassert_equal(stalls, 0, "a thread stopped making progress");
+}
+
 ZTEST_SUITE(sched_torture, NULL, seed_setup, before, NULL, NULL);

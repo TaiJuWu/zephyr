@@ -80,6 +80,26 @@ the stall warnings of rcutorture.
      - random mix of mutexes, semaphores, a spinlock shared with a timer
        ISR, yields, sleeps and priority changes
      - Zephyr-specific scenario
+   * - 11 condvar
+     - none
+     - producers and consumers on a bounded ring under a ``k_mutex``, timed
+       waits on two ``k_condvar``, signal or broadcast at random; no
+       overflow, no loss, per-producer order kept
+     - Zephyr-specific scenario
+   * - 12 fifo and lifo
+     - none
+     - a fixed set of items moves between a free ``k_fifo`` and a work
+       ``k_fifo`` and ``k_lifo``, by threads with timeouts and by a timer
+       ISR, with ``k_fifo_cancel_wait()`` now and then; every item is handed
+       out once and all come back
+     - Zephyr-specific scenario
+   * - 13 work queues
+     - none
+     - threads and a timer ISR submit, schedule, reschedule, cancel and
+       flush plain and delayable work items on the system work queue and a
+       second queue; no item runs twice at once or more often than queued,
+       all are idle after ``cancel_sync``
+     - Zephyr-specific scenario
 
 Running
 *******
