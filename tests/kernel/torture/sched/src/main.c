@@ -721,6 +721,7 @@ struct pi_group {
 	struct k_mutex m;
 	struct k_sem go_h, go_m, done_h, done_m;
 	volatile bool high_done;
+	volatile bool exit; /* set by low only, so medium and high answer every round low starts */
 	uint32_t iters;
 };
 
@@ -743,6 +744,7 @@ static void pi_low(void *a, void *b, void *c)
 		g->iters++;
 		progress[id]++;
 	}
+	g->exit = true;
 	g->high_done = true;
 	k_sem_give(&g->go_h);
 	k_sem_give(&g->go_m);
@@ -753,8 +755,11 @@ static void pi_mid(void *a, void *b, void *c)
 	int id = (int)(uintptr_t)a;
 	struct pi_group *g = &pig[id / 3];
 
-	while (!stop) {
+	for (;;) {
 		k_sem_take(&g->go_m, K_FOREVER);
+		if (g->exit) {
+			break;
+		}
 		while (!g->high_done) {
 			k_busy_wait(10);
 		}
@@ -768,8 +773,11 @@ static void pi_high(void *a, void *b, void *c)
 	int id = (int)(uintptr_t)a;
 	struct pi_group *g = &pig[id / 3];
 
-	while (!stop) {
+	for (;;) {
 		k_sem_take(&g->go_h, K_FOREVER);
+		if (g->exit) {
+			break;
+		}
 		k_mutex_lock(&g->m, K_FOREVER);
 		k_mutex_unlock(&g->m);
 		g->high_done = true;
