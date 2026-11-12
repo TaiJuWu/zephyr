@@ -623,5 +623,48 @@ ZTEST(usage_api, test_thread_stats_usage)
 	k_thread_abort(tid);
 }
 
+#ifdef CONFIG_SCHED_THREAD_USAGE_ANALYSIS
+static void usage_timer_expiry(struct k_timer *timer)
+{
+	ARG_UNUSED(timer);
+}
+
+static K_TIMER_DEFINE(usage_timer, usage_timer_expiry, NULL);
+
+/**
+ * @brief Test that interrupts without a context switch keep the window
+ *
+ * A periodic timer interrupts the busy current thread every tick. Its
+ * expiry function wakes no thread, so each interrupt returns to the same
+ * thread and must not start a new execution window: [current_cycles]
+ * keeps growing with the time spent busy.
+ */
+ZTEST(usage_api, test_thread_stats_irq_no_switch)
+{
+	k_thread_runtime_stats_t  stats1;
+	k_thread_runtime_stats_t  stats2;
+
+	k_sleep(K_TICKS(1));    /* Start a new execution window */
+
+	k_thread_runtime_stats_get(_current, &stats1);
+	k_timer_start(&usage_timer, K_TICKS(1), K_TICKS(1));
+
+	busy_loop(10);  /* Busy wait 10 ticks, interrupted every tick */
+
+	k_timer_stop(&usage_timer);
+	k_thread_runtime_stats_get(_current, &stats2);
+
+	/* Interrupt handling may not be counted: ask for half of the time */
+	zassert_true(stats2.current_cycles - stats1.current_cycles >
+		     k_ticks_to_cyc_floor64(5),
+		     "[current_cycles] grew by %llu cycles over 10 busy ticks",
+		     (unsigned long long)(stats2.current_cycles - stats1.current_cycles));
+}
+#else
+ZTEST(usage_api, test_thread_stats_irq_no_switch)
+{
+}
+#endif
+
 ZTEST_SUITE(usage_api, NULL, NULL,
 		ztest_simple_1cpu_before, ztest_simple_1cpu_after, NULL);
