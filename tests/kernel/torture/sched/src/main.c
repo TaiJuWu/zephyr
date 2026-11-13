@@ -1718,4 +1718,440 @@ ZTEST(sched_torture, test_13_workqueue)
 	zassert_equal(stalls, 0, "a thread stopped making progress");
 }
 
+/* ---------------------------------------------------------------------------
+ * 14. remote thread operations (no Linux counterpart, SMP): a controller on
+ * CPU 0 and a timer ISR suspend, resume, wake, reprioritize and abort victim
+ * threads pinned to the other CPUs while they run; aborted victims are
+ * created again. A suspended victim must not run, and every victim keeps
+ * making progress. Victims only pend without a timeout (no timed waits).
+ */
+#if defined(CONFIG_SMP) && defined(CONFIG_SCHED_CPU_MASK)
+#define RV_MAX (NTHREADS - 1)
+
+static struct k_sem rv_sem[RV_MAX];
+static volatile uint32_t rv_count[RV_MAX];
+static atomic_t rv_claim[RV_MAX], rv_dead[RV_MAX];
+static atomic_t rv_viol, rv_ops, rv_isr_ops, rv_aborts;
+static int rv_n;
+static uint32_t rv_isr_seed;
+
+static void rv_victim(void *a, void *b, void *c)
+{
+	int id = (int)(uintptr_t)a;
+	uint32_t s = seed_mix(0xa54ff53au * (id + 1));
+
+	while (!stop) {
+		uint32_t op = rnd(&s) % 100;
+
+		rv_count[id]++;
+		progress[id]++;
+		if (op < 80) {
+			k_busy_wait(20);
+		} else if (op < 90) {
+			k_yield();
+		} else if (op < 95) {
+			k_sem_take(&rv_sem[id], K_FOREVER);
+		} else {
+			k_sleep(K_FOREVER); /* woken by k_wakeup() */
+		}
+	}
+}
+
+static void rv_start(int v)
+{
+	k_sem_init(&rv_sem[v], 0, 1);
+	atomic_clear(&rv_dead[v]);
+	spawn(v, rv_victim, K_PRIO_PREEMPT(8), 1 + v % (ncpus() - 1));
+}
+
+/* Suspend v, check that it does not run, resume it */
+static void rv_suspend_check(int v, bool isr)
+{
+	k_thread_suspend(&threads[v]);
+	uint32_t c = rv_count[v];
+
+	k_busy_wait(isr ? 20 : 200);
+	if (rv_count[v] != c) {
+		atomic_inc(&rv_viol);
+	}
+	k_thread_resume(&threads[v]);
+}
+
+static void rv_isr(struct k_timer *t)
+{
+	int v = rnd(&rv_isr_seed) % rv_n;
+
+	if (!atomic_cas(&rv_claim[v], 0, 1)) {
+		return;
+	}
+	if (!atomic_get(&rv_dead[v])) {
+		if (rnd(&rv_isr_seed) % 16 == 0) {
+			k_thread_abort(&threads[v]);
+			atomic_set(&rv_dead[v], 1);
+			atomic_inc(&rv_aborts);
+		} else {
+			rv_suspend_check(v, true);
+		}
+		atomic_inc(&rv_isr_ops);
+	}
+	atomic_clear(&rv_claim[v]);
+}
+K_TIMER_DEFINE(rv_timer, rv_isr, NULL);
+
+static void rv_controller(void *a, void *b, void *c)
+{
+	int id = (int)(uintptr_t)a;
+	uint32_t s = seed_mix(0x510e527fu);
+
+	while (!stop) {
+		int v = rnd(&s) % rv_n;
+		uint32_t op = rnd(&s) % 100;
+
+		progress[id]++;
+		if (!atomic_cas(&rv_claim[v], 0, 1)) {
+			k_yield();
+			continue;
+		}
+		if (atomic_get(&rv_dead[v])) {
+			k_thread_join(&threads[v], K_FOREVER);
+			rv_start(v);
+		} else if (op < 35) {
+			rv_suspend_check(v, false);
+		} else if (op < 55) {
+			k_thread_priority_set(&threads[v], K_PRIO_PREEMPT(6 + rnd(&s) % 5));
+		} else if (op < 75) {
+			k_sem_give(&rv_sem[v]);
+		} else if (op < 92) {
+			k_wakeup(&threads[v]);
+		} else {
+			k_thread_abort(&threads[v]);
+			k_thread_join(&threads[v], K_FOREVER);
+			atomic_inc(&rv_aborts);
+			rv_start(v);
+		}
+		atomic_clear(&rv_claim[v]);
+		atomic_inc(&rv_ops);
+	}
+}
+#endif
+
+ZTEST(sched_torture, test_14_remote_ops)
+{
+	ONLY(14);
+#if defined(CONFIG_SMP) && defined(CONFIG_SCHED_CPU_MASK)
+	if (ncpus() < 2) {
+		ztest_test_skip();
+	}
+	rv_n = MIN(2 * (ncpus() - 1), RV_MAX);
+	int ctl = rv_n;
+
+	atomic_clear(&rv_viol);
+	atomic_clear(&rv_ops);
+	atomic_clear(&rv_isr_ops);
+	atomic_clear(&rv_aborts);
+	rv_isr_seed = seed_mix(0x9b05688cu);
+	for (int v = 0; v < rv_n; v++) {
+		atomic_clear(&rv_claim[v]);
+		rv_count[v] = 0;
+	}
+	monitor_start(rv_n + 1);
+	for (int v = 0; v < rv_n; v++) {
+		rv_start(v);
+	}
+	spawn(ctl, rv_controller, K_PRIO_PREEMPT(5), 0);
+	k_timer_start(&rv_timer, K_MSEC(1), K_MSEC(1));
+	k_msleep(DUR_MS);
+	stop = true;
+	k_thread_join(&threads[ctl], K_FOREVER);
+	k_timer_stop(&rv_timer);
+	for (int v = 0; v < rv_n; v++) {
+		if (!atomic_get(&rv_dead[v])) {
+			k_thread_resume(&threads[v]);
+			k_sem_give(&rv_sem[v]);
+			k_wakeup(&threads[v]);
+		}
+		k_thread_join(&threads[v], K_FOREVER);
+	}
+	k_thread_join(&mon_thread, K_FOREVER);
+	printk("ST remote ops: %d victims on %d CPUs, %ld ops, %ld from ISR, %ld aborts, "
+	       "violations %ld, stalls %u\n", rv_n, ncpus() - 1, (long)atomic_get(&rv_ops),
+	       (long)atomic_get(&rv_isr_ops), (long)atomic_get(&rv_aborts),
+	       (long)atomic_get(&rv_viol), stalls);
+	zassert_equal(atomic_get(&rv_viol), 0, "a suspended thread ran");
+	zassert_equal(stalls, 0, "a thread stopped making progress");
+#else
+	ztest_test_skip();
+#endif
+}
+
+/* ---------------------------------------------------------------------------
+ * 15. scftorture: SMP cross-calls. One thread per CPU keeps sending IPI work
+ * to one other CPU, to a random set of CPUs or to all others, and waits for
+ * it at once or after a few more calls (scftorture's wait/no-wait mixes).
+ * The function must run once on every targeted CPU and only there.
+ */
+#if defined(CONFIG_SMP) && defined(CONFIG_SCHED_IPI_SUPPORTED)
+#define SCF_INFLIGHT 4
+
+struct scf_call {
+	struct k_ipi_work w;
+	atomic_t hits;
+	uint32_t mask;
+};
+
+static struct scf_call scf_calls[NTHREADS][SCF_INFLIGHT];
+static atomic_t scf_viol, scf_calls_done, scf_runs, scf_self_eagain;
+
+static void scf_fn(struct k_ipi_work *w)
+{
+	struct scf_call *c = CONTAINER_OF(w, struct scf_call, w);
+
+	if ((c->mask & BIT(_current_cpu->id)) == 0U) {
+		atomic_inc(&scf_viol); /* ran on a CPU it was not sent to */
+	}
+	atomic_inc(&c->hits);
+	atomic_inc(&scf_runs);
+}
+
+static void scf_check(struct scf_call *c)
+{
+	if (c->mask == 0U) {
+		/* Never used, or sent to no CPU: see the empty set case below */
+		return;
+	}
+	if (k_ipi_work_wait(&c->w, K_MSEC(1000)) != 0) {
+		atomic_inc(&scf_viol); /* not processed within a second */
+	} else if (atomic_get(&c->hits) != (atomic_val_t)__builtin_popcount(c->mask)) {
+		atomic_inc(&scf_viol); /* ran too often or too rarely */
+	}
+}
+
+static void scf_caller(void *a, void *b, void *c_)
+{
+	int id = (int)(uintptr_t)a;
+	uint32_t s = seed_mix(0x1f83d9abu * (id + 1));
+	uint32_t all = BIT_MASK(ncpus());
+	int pend = 0;
+
+	for (int i = 0; i < SCF_INFLIGHT; i++) {
+		k_ipi_work_init(&scf_calls[id][i].w);
+	}
+	while (!stop) {
+		struct scf_call *c = &scf_calls[id][pend];
+		uint32_t op = rnd(&s) % 100;
+		unsigned int key = arch_irq_lock();
+		uint32_t self = BIT(_current_cpu->id);
+		uint32_t mask;
+
+		if (op < 40) {
+			mask = BIT(rnd(&s) % ncpus());               /* single */
+		} else if (op < 80) {
+			mask = rnd(&s) & all;                        /* many */
+		} else {
+			mask = all;                                  /* all */
+		}
+		mask &= ~self; /* k_ipi_work_add() never targets the calling CPU */
+		c->mask = mask;
+		atomic_clear(&c->hits);
+		if (k_ipi_work_add(&c->w, mask, scf_fn) != 0) {
+			atomic_inc(&scf_viol); /* still busy although waited for */
+		}
+		/* Like tests/kernel/multiprocessing/ipi_work, signal before the CPU
+		 * can change: k_ipi_work_signal() reads _current_cpu.
+		 */
+		k_ipi_work_signal();
+		arch_irq_unlock(key);
+		if (mask == 0U) {
+			/* Nothing targeted: by its documentation the wait is already over */
+			if (k_ipi_work_wait(&c->w, K_NO_WAIT) != 0) {
+				atomic_inc(&scf_self_eagain);
+			}
+		} else if (rnd(&s) % 2) {
+			scf_check(c);                                /* wait now */
+		} else {
+			pend = (pend + 1) % SCF_INFLIGHT;           /* wait later */
+			scf_check(&scf_calls[id][pend]);
+			continue;
+		}
+		atomic_inc(&scf_calls_done);
+		progress[id]++;
+	}
+	for (int i = 0; i < SCF_INFLIGHT; i++) {
+		if (scf_calls[id][i].mask != 0U) {
+			(void)k_ipi_work_wait(&scf_calls[id][i].w, K_MSEC(1000));
+		}
+	}
+}
+#endif
+
+ZTEST(sched_torture, test_15_scftorture)
+{
+	ONLY(15);
+#if defined(CONFIG_SMP) && defined(CONFIG_SCHED_IPI_SUPPORTED)
+	int n = MIN(ncpus(), NTHREADS);
+
+	if (n < 2) {
+		ztest_test_skip();
+	}
+	atomic_clear(&scf_viol);
+	atomic_clear(&scf_calls_done);
+	atomic_clear(&scf_runs);
+	atomic_clear(&scf_self_eagain);
+	memset(scf_calls, 0, sizeof(scf_calls));
+	monitor_start(n);
+	for (int i = 0; i < n; i++) {
+		spawn(i, scf_caller, K_PRIO_PREEMPT(6), i);
+	}
+	k_msleep(DUR_MS);
+	stop_and_join(n);
+	printk("ST scftorture: %d callers, %ld calls, %ld runs, %ld waits on an empty set "
+	       "returned -EAGAIN, violations %ld, stalls %u\n", n,
+	       (long)atomic_get(&scf_calls_done), (long)atomic_get(&scf_runs),
+	       (long)atomic_get(&scf_self_eagain), (long)atomic_get(&scf_viol), stalls);
+	zassert_true(atomic_get(&scf_runs) > 0);
+	zassert_equal(atomic_get(&scf_viol), 0, "a cross-call ran wrongly or was lost");
+	zassert_equal(stalls, 0, "a thread stopped making progress");
+#else
+	ztest_test_skip();
+#endif
+}
+
+/* ---------------------------------------------------------------------------
+ * 16. cross-CPU timers (no Linux counterpart, SMP): each timer is started
+ * by a thread on one CPU and stopped, restarted, queried and synced by a
+ * thread on another, while it expires on whichever CPU takes the tick.
+ * An expiry that starts well after k_timer_stop() returned, before the
+ * timer is started again, is one the stop failed to cancel;
+ * k_timer_status_sync() must return.
+ */
+#define XT_TIMERS 4
+
+struct xt_timer {
+	struct k_timer t;
+	atomic_t armed;   /* 1 from start until stop */
+	atomic_t late;    /* expiries seen while not armed */
+	atomic_t expiries, stops;
+};
+
+static struct xt_timer xt[XT_TIMERS];
+static atomic_t xt_viol, xt_syncs;
+
+static void xt_expiry(struct k_timer *t)
+{
+	struct xt_timer *x = CONTAINER_OF(t, struct xt_timer, t);
+
+	if (!atomic_get(&x->armed)) {
+		atomic_inc(&x->late);
+	}
+	atomic_inc(&x->expiries);
+}
+
+static void xt_stop_fn(struct k_timer *t)
+{
+	struct xt_timer *x = CONTAINER_OF(t, struct xt_timer, t);
+
+	atomic_inc(&x->stops);
+}
+
+static struct k_mutex xt_mtx[XT_TIMERS]; /* orders start against stop+armed */
+
+static void xt_starter(void *a, void *b, void *c)
+{
+	int id = (int)(uintptr_t)a;
+	uint32_t s = seed_mix(0x6a09e667u ^ (id + 1));
+
+	while (!stop) {
+		struct xt_timer *x = &xt[rnd(&s) % XT_TIMERS];
+		int i = x - xt;
+		k_timeout_t d = K_TICKS(1 + rnd(&s) % 3);
+
+		/* Start only a stopped timer, so a running one gets to expire */
+		k_mutex_lock(&xt_mtx[i], K_FOREVER);
+		if (!atomic_get(&x->armed)) {
+			atomic_set(&x->armed, 1);
+			k_timer_start(&x->t, d,
+				      (rnd(&s) % 2) ? K_TICKS(1 + rnd(&s) % 2) : K_NO_WAIT);
+		}
+		k_mutex_unlock(&xt_mtx[i]);
+		k_sleep(K_TICKS(1));
+		progress[id]++;
+	}
+}
+
+static void xt_stopper(void *a, void *b, void *c)
+{
+	int id = (int)(uintptr_t)a;
+	uint32_t s = seed_mix(0xbb67ae85u ^ (id + 1));
+
+	while (!stop) {
+		struct xt_timer *x = &xt[rnd(&s) % XT_TIMERS];
+		int i = x - xt;
+		uint32_t op = rnd(&s) % 100;
+
+		if (op < 50) {
+			k_mutex_lock(&xt_mtx[i], K_FOREVER);
+			k_timer_stop(&x->t);
+			/* An expiry already delivered on another CPU may still be
+			 * running: only one that starts this long after the stop is
+			 * one the stop should have cancelled.
+			 */
+			k_busy_wait(200);
+			atomic_set(&x->armed, 0);
+			k_mutex_unlock(&xt_mtx[i]);
+		} else if (op < 70) {
+			(void)k_timer_status_get(&x->t);
+			(void)k_timer_remaining_get(&x->t);
+		} else if (op < 85) {
+			(void)k_timer_status_sync(&x->t);
+			atomic_inc(&xt_syncs);
+		} else {
+			k_busy_wait(rnd(&s) % 100);
+		}
+		progress[id]++;
+	}
+}
+
+ZTEST(sched_torture, test_16_cross_cpu_timers)
+{
+	ONLY(16);
+	int np = MAX(1, ncpus() / 2), n = 2 * np;
+	uint32_t exp = 0, stops = 0;
+	long late = 0;
+
+	if (n > NTHREADS) {
+		np = NTHREADS / 2;
+		n = 2 * np;
+	}
+	atomic_clear(&xt_viol);
+	atomic_clear(&xt_syncs);
+	for (int i = 0; i < XT_TIMERS; i++) {
+		k_timer_init(&xt[i].t, xt_expiry, xt_stop_fn);
+		k_mutex_init(&xt_mtx[i]);
+		atomic_clear(&xt[i].armed);
+		atomic_clear(&xt[i].late);
+		atomic_clear(&xt[i].expiries);
+		atomic_clear(&xt[i].stops);
+	}
+	monitor_start(n);
+	for (int i = 0; i < np; i++) {
+		/* starter and stopper of a pair on different CPUs where there are two */
+		spawn(i, xt_starter, K_PRIO_PREEMPT(6), (2 * i) % ncpus());
+		spawn(np + i, xt_stopper, K_PRIO_PREEMPT(6), (2 * i + 1) % ncpus());
+	}
+	k_msleep(DUR_MS);
+	stop_and_join(n);
+	for (int i = 0; i < XT_TIMERS; i++) {
+		k_timer_stop(&xt[i].t);
+		exp += atomic_get(&xt[i].expiries);
+		stops += atomic_get(&xt[i].stops);
+		late += atomic_get(&xt[i].late);
+	}
+	printk("ST cross-CPU timers: %d starters, %d stoppers, %u expiries, %u stops, %ld syncs, "
+	       "%ld expiries after stop, stalls %u\n", np, np, exp, stops,
+	       (long)atomic_get(&xt_syncs), late, stalls);
+	zassert_true(exp > 0);
+	zassert_equal(late, 0, "a timer expired after k_timer_stop() returned");
+	zassert_equal(stalls, 0, "a thread stopped making progress");
+}
+
 ZTEST_SUITE(sched_torture, NULL, seed_setup, before, NULL, NULL);

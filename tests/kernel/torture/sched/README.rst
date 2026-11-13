@@ -100,6 +100,29 @@ the stall warnings of rcutorture.
        second queue; no item runs twice at once or more often than queued,
        all are idle after ``cancel_sync``
      - Zephyr-specific scenario
+   * - 14 remote ops (SMP)
+     - none
+     - a controller on CPU 0 and a timer ISR suspend, resume, wake,
+       reprioritize and abort victims running on the other CPUs, and create
+       aborted ones again; a suspended victim must not run
+     - Zephyr-specific scenario; needs ``CONFIG_SCHED_CPU_MASK``; victims
+       have no timed waits
+   * - 15 scftorture (SMP)
+     - ``scftorture``: threads keep calling ``smp_call_function_single``,
+       ``_many`` and ``_all``, waiting at once or later; the function must
+       run once on each target
+     - ``k_ipi_work_add()``, ``k_ipi_work_signal()``, ``k_ipi_work_wait()``
+       with up to four calls in flight per thread
+     - the calling CPU is never a target (``k_ipi_work_add()`` drops it);
+       a wait on a call whose target set ended up empty is counted
+       separately, not as a failure
+   * - 16 cross-CPU timers (SMP)
+     - none
+     - timers started on one CPU and stopped, restarted, queried and synced
+       on another while they expire; no expiry may start after a stop
+       returned, before the next start
+     - Zephyr-specific scenario; an expiry already delivered when the stop
+       returns may still finish
 
 Running
 *******
